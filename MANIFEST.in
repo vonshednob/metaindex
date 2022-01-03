@@ -1,0 +1,11 @@
+recursive-include metaindex *.py *.html
+recursive-include tests *.py
+
+recursive-include misc *.py *.conf *.desktop
+recursive-include doc *
+recursive-include man *
+
+include CHANGELOG.md
+include LICENSE
+include README.md
+

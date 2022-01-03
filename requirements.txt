@@ -1,0 +1,6 @@
+mutagen
+pillow
+pyexiv2
+pdfminer
+defusedxml
+
