@@ -172,7 +172,7 @@ class Cache:
             self.db.execute("update `files` set `last_modified` = ?", (sql.MIN_DATE,))
             return
 
-        elif not isinstance(paths, list):
+        if not isinstance(paths, list):
             paths = [paths]
 
         paths = [pathlib.Path(path).expanduser().resolve() for path in paths]
@@ -215,7 +215,7 @@ class Cache:
 
         qry, args = query.as_sql()
         ids = [row['id'] for row in self.db.execute(qry, args)]
-        
+
         return self._resolve_ids(ids)
 
     def get(self, paths, recursive=True):
@@ -231,7 +231,7 @@ class Cache:
             paths = [paths]
 
         paths = [pathlib.Path(path).expanduser().resolve() for path in paths]
-        
+
         args = [str(path) for path in paths if not path.is_dir()]
         if len(args) == 0:
             return []
@@ -309,7 +309,7 @@ class Cache:
         for filename in data.keys():
             data[filename][shared.IS_RECURSIVE] = data[filename][shared.IS_RECURSIVE] and \
                                                   self.recursive_extra_metadata
-        
+
         return data
 
     def _resolve_ids(self, ids):
@@ -321,7 +321,9 @@ class Cache:
             id_ = row['id']
             if id_ not in result:
                 last_modified = sql.str_to_dt(row['last_modified'])
-                result[id_] = Cache.Entry(pathlib.Path(row['path']), multidict.MultiDict(), last_modified)
+                result[id_] = Cache.Entry(pathlib.Path(row['path']),
+                                          multidict.MultiDict(),
+                                          last_modified)
 
             key, value = self._translate_row(row)
             if not isinstance(key, str):
@@ -329,11 +331,11 @@ class Cache:
                 key = str(key)
             result[id_][1].add(key, value)
 
-        return [v for v in result.values()]
+        return list(v for v in result.values())
 
     def _translate_row(self, row):
         key, type_, value = row['key'], row['type'], row['value']
-        
+
         if type_ == Cache.TYPE_DATETIME:
             value = sql.str_to_dt(value)
         elif type == Cache.TYPE_INT:
@@ -347,7 +349,9 @@ class Cache:
         if self.db is not None:
             self.db.close()
 
-        location = self.config.path('General', 'cache', configuration.CACHEPATH) / Cache.CACHE_FILENAME
+        location = self.config.path(configuration.SECTION_GENERAL,
+                                    configuration.CONFIG_CACHE,
+                                    configuration.CACHEPATH) / Cache.CACHE_FILENAME
         if not location.parent.exists():
             location.parent.mkdir(parents=True, exist_ok=True)
 
@@ -397,6 +401,7 @@ class ThreadedCache:
     FIND = "find"
     REFRESH = "refresh"
     INSERT = "insert"
+    GET_KEYS = "get-keys"
     LAST_MODIFIED = "last_modified"
 
     def __init__(self, config):
@@ -426,6 +431,12 @@ class ThreadedCache:
     def insert(self, path, metadata, last_modified=None):
         with self.single_call:
             self.queue.put((self.INSERT, path, metadata, last_modified))
+            return self.results.get()
+
+    def keys(self):
+        """Returns a set of all known metadata keys."""
+        with self.single_call:
+            self.queue.put((self.GET_KEYS,))
             return self.results.get()
 
     def last_modified(self):
@@ -468,6 +479,8 @@ class ThreadedCache:
                     result = self.cache.insert(*args)
                 elif command == self.LAST_MODIFIED:
                     result = self.cache.last_modified()
+                elif command == self.GET_KEYS:
+                    result = self.cache.keys()
             except Exception as exc:
                 result = exc
 
@@ -483,6 +496,7 @@ class MemoryCache:
     def __init__(self, config):
         self.config = config
         self.entries_by_path = {}
+        self.all_keys = set()
         self.last_read = datetime.datetime.min
 
         self.tcache = ThreadedCache(config)
@@ -544,6 +558,8 @@ class MemoryCache:
 
     def get(self, paths, recursive=True):
         """Get all entries for these paths (recursively)"""
+        if not isinstance(paths, (list, tuple, set)):
+            paths = [paths]
         if recursive:
             for path, entry in self.entries_by_path.items():
                 if not any(path.is_relative_to(pathpattern) for pathpattern in paths):
@@ -556,20 +572,33 @@ class MemoryCache:
 
     def refresh(self, paths, recursive=True, processes=None):
         """(Re-)index these paths (recursively by default)"""
-        with self.writing:
-            self.tcache.refresh(paths, recursive, processes)
-            if recursive:
-                for path in self.entries_by_path:
-                    if any(path.is_relative_to(pathpattern) for pathpattern in paths):
-                        del self.entries_by_path[path]
-            else:
-                for path in paths:
-                    if path in self.entries_by_path:
-                        del self.entries_by_path[path]
+        if not isinstance(paths, (list, set, tuple)):
+            paths = [paths]
+
+        with self.reloading:
+            with self.writing:
+                self.tcache.refresh(paths, recursive, processes)
+                if recursive:
+                    for path in set(self.entries_by_path.keys()):
+                        if any(path.is_relative_to(pathpattern) for pathpattern in paths):
+                            del self.entries_by_path[path]
+                else:
+                    for path in paths:
+                        if path in self.entries_by_path:
+                            del self.entries_by_path[path]
+
+                for entry in self.tcache.get(paths, recursive):
+                    self.entries_by_path[entry.path] = entry
+                    self.all_keys |= entry.metadata.keys()
+
+    def keys(self):
+        """Returns a set of all known metadata keys."""
+        return self.all_keys
 
     def invalidate(self):
         """Invalidate the cached entries and reload"""
         self.entries_by_path = {}
+        self.all_keys = {}
         self.reload()
 
     def reload(self):
@@ -582,12 +611,15 @@ class MemoryCache:
         Do not call this directly, but call 'invalidate' or 'reload' instead.
         """
         entries = {}
+        keys = set()
         with self.reloading:
             for entry in self.tcache.find(''):
                 entries[entry.path] = entry
+                keys |= entry.metadata.keys()
 
             with self.writing:
                 self.entries_by_path = entries
+                self.all_keys = keys
                 self.last_read = datetime.datetime.now()
                 self.is_initialized = True
 
@@ -597,6 +629,7 @@ class MemoryCache:
             self.tcache.quit()
             self.tcache = ThreadedCache(self.config)
             self.entries_by_path = {}
+            self.all_keys = set()
 
 
 def find_files(paths, recursive=True):

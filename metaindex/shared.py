@@ -7,6 +7,24 @@ import multidict
 IS_RECURSIVE = 'extra_metadata_is_recursive'
 LAST_MODIFIED = 'extra_metadata_last_modified'
 
+DUBLINCORE_TAGS = {
+    'contributor',
+    'coverage',
+    'creator',
+    'date',
+    'description',
+    'format',
+    'identifier',
+    'language',
+    'publisher',
+    'relation',
+    'rights',
+    'source',
+    'subject',
+    'title',
+    'type',
+}
+
 
 def get_last_modified(file_):
     """Return the last_modified datetime of the given file.

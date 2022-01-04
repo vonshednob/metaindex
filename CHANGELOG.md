@@ -5,6 +5,15 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+## 0.5.0
+### Added
+- `ThreadedCache` and `MemoryCache` both support the `keys` function, too
+
+### Fixed
+- `MemoryCache`'s refresh function would forget the refreshed files
+- Various issues where MemoryCache's API would not be quite the same as
+  Cache's API.
+
 ## 0.4.0
 ### Added
 - MemoryCache for fast queries in multi-threaded applications
