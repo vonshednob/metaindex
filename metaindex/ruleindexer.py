@@ -1,12 +1,10 @@
 import re
-import datetime
-import pathlib
 
 import multidict
 
 from metaindex import logger
 from metaindex import shared
-from metaindex.indexer import registered_indexer, to_utf8, Indexer, Order
+from metaindex.indexer import registered_indexer, Indexer, Order
 
 
 class ParseError(RuntimeError): pass

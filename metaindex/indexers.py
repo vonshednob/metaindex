@@ -33,12 +33,14 @@ from metaindex import logger
 from metaindex import shared
 from metaindex import json
 from metaindex import opf
+from metaindex import configuration
+from metaindex.indexer import registered_indexer, Indexer, Order, only_if_changed
+from metaindex.ruleindexer import RuleIndexer as _
+
 try:
     from metaindex import yaml
 except ImportError:
     yaml = None
-from metaindex.indexer import registered_indexer, to_utf8, Indexer, Order, only_if_changed
-from metaindex.ruleindexer import RuleIndexer
 
 
 if pyexiv2 is not None:
@@ -260,7 +262,7 @@ if pdfminer is not None:
                     value = None
 
                     if isinstance(raw, bytes):
-                        value = to_utf8(raw)
+                        value = shared.to_utf8(raw)
                         if value is None:
                             continue
                     elif isinstance(raw, str) and len(raw.strip()) > 0:
@@ -390,23 +392,37 @@ class FileTagsIndexer(Indexer):
 
 
 class CollectionSidecarIndexer(Indexer):
+    PREFIX = None
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        logger.debug(f"Creating a new {self.NAME}")
 
         # cached metadata for collection metadata, pathlib.Path -> multidict
         self.collection_cache = {}
         self.cached_sidecar_files = set()
 
-        self.collection_metadata = self.cache.config.list('General', 'collection-metadata', '')
-        self.recursive_metadata = self.cache.config.bool('General', 'recursive-extra-metadata', 'yes')
+        self.collection_metadata = self.cache.config.list(
+            configuration.SECTION_GENERAL,
+            configuration.CONFIG_COLLECTION_METADATA,
+            '')
+        self.recursive_metadata = self.cache.config.bool(
+            configuration.SECTION_GENERAL,
+            configuration.CONFIG_RECURSIVE_EXTRA_METADATA,
+            'yes')
+
+    def run(self, path, info, last_cached):
+        raise NotImplementedError()
 
     def find_collection_sidecars(self, path, suffix):
         """Walk upwards the directory structure and yield all existing collection metadata files"""
         sidecars = []
         pathptr = path
+        if pathptr.is_file():
+            pathptr = path.parent
         while True:
-            for fn in self.collection_metadata:
-                sidecar = pathptr / (fn + suffix)
+            for filename in self.collection_metadata:
+                sidecar = pathptr / (filename + suffix)
                 if sidecar.exists():
                     sidecars.append(sidecar)
             if not self.recursive_metadata or pathptr == pathptr.parent:
@@ -417,11 +433,13 @@ class CollectionSidecarIndexer(Indexer):
 
     def cache_collection_sidecars(self, path, store):
         """Fill the cache with the sidecar files' contents"""
+        assert self.PREFIX is not None
         for sidecar in self.find_collection_sidecars(path, store.SUFFIX):
             if sidecar in self.cached_sidecar_files:
                 continue
             self.cached_sidecar_files.add(sidecar)
 
+            self.collection_cache[sidecar.parent] = multidict.MultiDict()
             for filepath, extra in store.get_for_collection(sidecar, self.PREFIX+'.').items():
                 self.collection_cache[filepath] = extra
 
@@ -430,10 +448,12 @@ class CollectionSidecarIndexer(Indexer):
 
         for sidecar in reversed(self.find_collection_sidecars(path, suffix)):
             if sidecar.parent not in self.collection_cache:
-                logger.info("A sidecar file has been added while the indexer was running. That file is ignored until the next rerun")
+                logger.info("A sidecar file has been added while the indexer was running. "
+                            "That file is ignored until the next rerun.")
                 continue
             extra = self.collection_cache[sidecar.parent]
-            if sidecar.parent != path.parent and not (self.recursive_metadata and extra.get(shared.IS_RECURSIVE, False)):
+            if sidecar.parent != path.parent and \
+               not (self.recursive_metadata and extra.get(shared.IS_RECURSIVE, False)):
                 continue
             meta.extend(extra)
 
@@ -444,6 +464,7 @@ class CollectionSidecarIndexer(Indexer):
         return meta
 
     def run_with_store(self, store, path, info, last_cached):
+        assert self.PREFIX is not None
         self.cache_collection_sidecars(path, store)
 
         extra = self.get_collection_metadata(path, store.SUFFIX)
@@ -451,7 +472,7 @@ class CollectionSidecarIndexer(Indexer):
         # check for direct sidecar file
         sidecar = path.parent / (path.stem + store.SUFFIX)
         if sidecar.is_file():
-            extra.extend(store.get(sidecar, self.PREFIX + '.'))
+            extra.extend(store.get(sidecar, self.PREFIX+'.'))
             extra.popall(shared.IS_RECURSIVE, [])
 
         return len(extra) > 0, extra
@@ -491,4 +512,3 @@ if yaml is not None:
 
         def run(self, path, info, last_cached):
             return self.run_with_store(yaml, path, info, last_cached)
-

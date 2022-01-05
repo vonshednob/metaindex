@@ -1,8 +1,6 @@
 """General access to all methods of metadata storage"""
 import pathlib
 
-import multidict
-
 from metaindex import json
 from metaindex import opf
 

@@ -1,8 +1,6 @@
-import codecs
 import datetime
 import pathlib
 import mimetypes
-import zipfile
 
 import multidict
 
@@ -46,6 +44,8 @@ def only_if_changed(fnc):
 
 
 class Indexer:
+    # The name by which this indexer is registered
+    NAME = None
     # specify what suffices or mimetypes are handled by this indexer, e.g.
     # ACCEPT = ['.rst', '.md', 'text/html', 'image/']
     # anything starting with a . is expected to be a suffix,
@@ -94,7 +94,7 @@ class Indexer:
                 return True
             if '/' in item:
                 mimetype, _ = mimetypes.guess_type(path.name, strict=False)
-                if mimetype.lower().startswith(item.lower()):
+                if mimetype is not None and mimetype.lower().startswith(item.lower()):
                     return True
 
         return False
@@ -110,12 +110,15 @@ class Indexer:
         return last_cached.last_modified
 
     def changed_since_cached(self, path, last_cached):
-        """Return True if the file at path has changed since it was cached last (according to last_cached)"""
+        """Return True if the file at path has changed since it was cached
+           last (according to last_cached)"""
         last_cached_dt = Indexer.cached_dt(last_cached)
-        return last_cached_dt <= datetime.datetime.min or self.cache.last_modified(path) > last_cached_dt
+        return last_cached_dt <= datetime.datetime.min \
+            or self.cache.last_modified(path) > last_cached_dt
 
     def reuse_cached(self, last_cached):
-        """Returns the tuple True, dict(), the latter containing all entries from last_cached produced by this indexer
+        """Returns the tuple True, dict(), the latter containing all entries
+           from last_cached produced by this indexer
 
         The idea is that you can call ``return self.reuse_cached(last_cached)`` from ``run(...)``
         if you are skipping the execution of the indexer because nothing changed since the last time
@@ -158,15 +161,16 @@ class Indexer:
 
 
 def registered_indexer(cls):
+    """Decorator to register an indexer"""
     assert issubclass(cls, Indexer)
-    
+
     global _registered_indexers
     global _indexer_by_suffix
     global _indexer_by_mimetype
     global _generic_indexers
 
-    assert hasattr(cls, 'PREFIX')
     assert cls.PREFIX is not None
+    assert cls.NAME is not None
     assert cls.NAME not in _registered_indexers
     _registered_indexers[cls.NAME] = cls
 
@@ -204,40 +208,11 @@ def remove_indexers(names):
         if name in _registered_indexers:
             del _registered_indexers[name]
 
-    _indexer_by_suffix = dict([(key, [value for value in values if value not in names])
-                               for key, values in _indexer_by_suffix.items()])
-    _indexer_by_mimetype = dict([(key, [value for value in values if value not in names])
-                                 for key, values in _indexer_by_mimetype.items()])
+    _indexer_by_suffix = {key: [value for value in values if value not in names]
+                          for key, values in _indexer_by_suffix.items()}
+    _indexer_by_mimetype = {key: [value for value in values if value not in names]
+                            for key, values in _indexer_by_mimetype.items()}
     _generic_indexers = [value for value in _generic_indexers if value not in names]
-
-
-def to_utf8(raw):
-    if isinstance(raw, str):
-        return raw
-    encoding = None
-    skip = 1
-
-    if raw.startswith(codecs.BOM_UTF8):
-        encoding = 'utf-8'
-    elif raw.startswith(codecs.BOM_UTF16_BE):
-        encoding = 'utf-16-be'
-    elif raw.startswith(codecs.BOM_UTF16_LE):
-        encoding = 'utf-16-le'
-    elif raw.startswith(codecs.BOM_UTF32_BE):
-        encoding = 'utf-32-be'
-    elif raw.startswith(codecs.BOM_UTF32_LE):
-        encoding = 'utf-32-le'
-    else:
-        # just best efford
-        encoding = 'utf-8'
-        skip = 0
-
-    try:
-        text = str(raw, encoding=encoding).strip()
-        return text[skip:]  # drop the BOM, if applicable
-    except UnicodeError:
-        pass
-    return None
 
 
 class IndexerCache:
@@ -247,7 +222,7 @@ class IndexerCache:
         self.fulltext = fulltext
         self.config = config
         self._last_modified = last_modified
-        self.base_info = base_info or dict()
+        self.base_info = base_info or {}
 
     def last_modified(self, filepath):
         return self._last_modified.get(filepath, datetime.datetime.min)
@@ -302,7 +277,7 @@ def get_metadata(filename, indexer_cache):
         delete_keys |= {key_.split('.', 1)[1]
                         for key_, value in extra.items()
                         if value is None and key_.startswith('extra.')}
-        
+
         if success:
             applied_indexers += 1
             info.extend(extra)
@@ -316,7 +291,7 @@ def get_metadata(filename, indexer_cache):
 
 def indexer(filenames):
     """Takes a list of filenames and tries to extract the metadata for all
-    
+
     Returns a dictionary mapping filename to a dictionary with the metadata.
     """
     global ocr_facility
@@ -325,7 +300,11 @@ def indexer(filenames):
     global _base_info
     global _last_modified
 
-    indexer_cache = IndexerCache(ocr_facility, obtain_fulltext, app_config, _last_modified, _base_info)
+    indexer_cache = IndexerCache(ocr_facility,
+                                 obtain_fulltext,
+                                 app_config,
+                                 _last_modified,
+                                 _base_info)
     for name in _registered_indexers.keys():
         # pre-load all
         indexer_cache.get(name)
@@ -345,7 +324,13 @@ def indexer(filenames):
     return result
 
 
-def index_files(files, processes=None, ocr=None, fulltext=False, config=None, last_modified=None, last_cached=None):
+def index_files(files,
+                processes=None,
+                ocr_=None,
+                fulltext=False,
+                config=None,
+                last_modified=None,
+                last_cached=None):
     """Run indexer on all files"""
     global ocr_facility
     global obtain_fulltext
@@ -354,7 +339,7 @@ def index_files(files, processes=None, ocr=None, fulltext=False, config=None, la
     global _base_info
 
     if ocr is not None:
-        ocr_facility = ocr
+        ocr_facility = ocr_
     if last_modified is None:
         _last_modified = {}
     else:
@@ -372,8 +357,11 @@ def index_files(files, processes=None, ocr=None, fulltext=False, config=None, la
     else:
         raise NotImplementedError()
 
-    logger.info(f"Processed {len([v for v in index_result if v[1]])} files in {datetime.datetime.now() - then}")
-    logger.debug(f"Successfully indexed: {', '.join([str(v[0]) for v in index_result if v[1]])}")
+    logger.info("Processed %s files in %s",
+                len([v for v in index_result if v[1]]),
+                datetime.datetime.now() - then)
+    logger.debug("Successfully indexed: %s",
+                 ', '.join([str(v[0]) for v in index_result if v[1]]))
 
     return index_result
 
@@ -384,4 +372,3 @@ if __name__ == '__main__':
     logger.setup('DEBUG')
 
     index = index_files([pathlib.Path(i).expanduser() for i in sys.argv[1:]])
-

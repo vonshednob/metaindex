@@ -34,13 +34,20 @@ class Cache:
 
     def __init__(self, config=None):
         self.config = config or configuration.load()
+        assert isinstance(self.config, configuration.Configuration)
         self.db = None
 
-        self.recursive_extra_metadata = config.bool("General", "recursive-extra-metadata", "y")
-        self.ignore_dirs = config.list('General', 'ignore-directories', "", separator="\n")
-        self.ignore_tags = config.list('General', 'ignore-tags', "")
+        self.recursive_extra_metadata = config.bool(configuration.SECTION_GENERAL,
+                                                    configuration.CONFIG_RECURSIVE_EXTRA_METADATA,
+                                                    "y")
+        self.ignore_dirs = config.list(configuration.SECTION_GENERAL,
+                                       configuration.CONFIG_IGNORE_DIRS,
+                                       "", separator="\n")
+        self.ignore_tags = config.list(configuration.SECTION_GENERAL,
+                                       configuration.CONFIG_IGNORE_TAGS,
+                                       "")
 
-        ocr_opts = config.list("General", "ocr", "no")
+        ocr_opts = config.list(configuration.SECTION_GENERAL, configuration.CONFIG_OCR, "no")
         if len(ocr_opts) == 0 or ocr_opts[0].lower() in config.FALSE:
             ocr_opts = False
         elif ocr_opts[0].lower() in config.TRUE:
@@ -66,9 +73,11 @@ class Cache:
         ignore = config.list('General', 'ignore-files', '', separator="\n")
 
         if len(accept) > 0:
-            self.accept_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I) for pattern in accept]
+            self.accept_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
+                                         for pattern in accept]
         elif len(ignore) > 0:
-            self.ignore_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I) for pattern in ignore]
+            self.ignore_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
+                                         for pattern in ignore]
 
         self._open_db()
 
@@ -132,7 +141,9 @@ class Cache:
         paths = [pathlib.Path(path).expanduser().resolve() for path in paths]
 
         # filter out ignored directories
-        paths = [path for path in paths if not any([ignoredir in path.parts for ignoredir in self.ignore_dirs])]
+        paths = [path for path in paths
+                 if not any([ignoredir in path.parts
+                             for ignoredir in self.ignore_dirs])]
 
         dirs = [path for path in paths if path.is_dir()]
         files = {path for path in paths if path.is_file() and self._accept_file(path)}
@@ -147,8 +158,8 @@ class Cache:
             return False
         pathstr = str(path)
         if self.accept_file_patterns is not None:
-            return any([pattern.match(pathstr) for pattern in self.accept_file_patterns])
-        return not any([pattern.match(pathstr) for pattern in self.ignore_file_patterns])
+            return any(pattern.match(pathstr) for pattern in self.accept_file_patterns)
+        return not any(pattern.match(pathstr) for pattern in self.ignore_file_patterns)
 
     def clear(self):
         """Remove everything from the cache"""

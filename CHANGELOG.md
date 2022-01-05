@@ -5,6 +5,10 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+## 0.5.1
+### Fixed
+- Collection metadata files could be missed in some cases
+
 ## 0.5.0
 ### Added
 - `ThreadedCache` and `MemoryCache` both support the `keys` function, too

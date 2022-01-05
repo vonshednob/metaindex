@@ -1,4 +1,5 @@
 """Functions, names, and identifiers shared in the code"""
+import codecs
 import datetime
 
 import multidict
@@ -66,3 +67,31 @@ def get_all_fulltext(metadata):
         fulltext += "".join(metadata.getall(key))
     return fulltext
 
+
+def to_utf8(raw):
+    if isinstance(raw, str):
+        return raw
+    encoding = None
+    skip = 1
+
+    if raw.startswith(codecs.BOM_UTF8):
+        encoding = 'utf-8'
+    elif raw.startswith(codecs.BOM_UTF16_BE):
+        encoding = 'utf-16-be'
+    elif raw.startswith(codecs.BOM_UTF16_LE):
+        encoding = 'utf-16-le'
+    elif raw.startswith(codecs.BOM_UTF32_BE):
+        encoding = 'utf-32-be'
+    elif raw.startswith(codecs.BOM_UTF32_LE):
+        encoding = 'utf-32-le'
+    else:
+        # just best efford
+        encoding = 'utf-8'
+        skip = 0
+
+    try:
+        text = str(raw, encoding=encoding).strip()
+        return text[skip:]  # drop the BOM, if applicable
+    except UnicodeError:
+        pass
+    return None

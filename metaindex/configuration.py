@@ -242,6 +242,9 @@ class Configuration(BaseConfiguration):
         if len(usable_stores) == 0:
             return None, False, None
 
+        logger.debug("Resolving sidecar files for %s", path)
+        logger.debug(" ... available stores: %s", usable_stores)
+
         prefer_collection = False
 
         # find existing sidecar file
@@ -251,16 +254,23 @@ class Configuration(BaseConfiguration):
                 sidecar = location
                 break
 
+        logger.debug(" ... any direct sidecar? %s", sidecar)
+
         # if there was none, find existing collection sidecar file
         if sidecar is None:
             for store, is_usable in all_stores:
                 for collection_name in self.collection_metadata:
-                    location = path.parent / (collection_name + store.SUFFIX)
+                    if not collection_name.endswith(store.SUFFIX):
+                        continue
+                    location = path.parent / collection_name
+                    logger.debug(" ... trying at %s", location.name)
                     if location.is_file():
+                        logger.debug(" ... found a collection sidecar file at %s", location)
                         if is_usable:
                             sidecar = location
                             is_collection = True
                             break
+                        logger.debug(" ... but it cannot be used")
                         prefer_collection = True
                 if sidecar is not None:
                     break
