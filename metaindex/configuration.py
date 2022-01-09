@@ -97,6 +97,7 @@ CONFIG_IGNORE_INDEXERS = 'ignore-indexers'
 CONFIG_IGNORE_TAGS = 'ignore-tags'
 CONFIG_PREFERRED_SIDECAR_FORMAT = 'preferred-sidecar-format'
 CONFIG_OCR = 'ocr'
+CONFIG_FULLTEXT = 'fulltext'
 CONFIG_MIMETYPES = 'mimetypes'
 
 CONF_DEFAULTS = {SECTION_GENERAL: {
@@ -111,6 +112,7 @@ CONF_DEFAULTS = {SECTION_GENERAL: {
                     CONFIG_IGNORE_TAGS: "Exif.Image.StripByteCounts, Exif.Image.StripOffsets",
                     CONFIG_PREFERRED_SIDECAR_FORMAT: '.json, .opf',
                     CONFIG_OCR: 'no',
+                    CONFIG_FULLTEXT: 'no',
                  },
                  SECTION_SYNONYMS: SYNONYMS,
                  SECTION_INCLUDE: {
@@ -222,6 +224,36 @@ class Configuration(BaseConfiguration):
         preferred = [stores.BY_SUFFIX[suffix] for suffix in preferred if suffix in stores.BY_SUFFIX]
         return preferred \
              + [store for store in stores.STORES if store not in preferred]
+
+    def find_all_sidecar_files(self, path):
+        """Find all sidecar files for this file
+
+        Generates a sequence of (pathlib.Path, bool) with the location of the
+        existing sidecar file and whether or not it is a collection metadata file.
+
+        The files are returned in order of preference and direct sidecar files
+        before collection sidecar files.
+
+        May not return anything, if no sidecar files exist."""
+        all_stores = [(store, hasattr(store, 'store'))
+                      for store in self.get_preferred_sidecar_stores()]
+        usable_stores = [store for store, usable in all_stores if usable]
+
+        if len(usable_stores) == 0:
+            return
+
+        for store, usable in all_stores:
+            sidecar = path.parent / (path.stem + store.SUFFIX)
+            if sidecar.is_file() and usable:
+                yield sidecar, False
+
+        for store, usable in all_stores:
+            for collection_fname in self.collection_metadata:
+                if not collection_fname.endswith(store.SUFFIX):
+                    continue
+                sidecar = path.parent / collection_fname
+                if sidecar.is_file() and usable:
+                    yield sidecar, True
 
     def resolve_sidecar_for(self, path):
         """Get a sidecar file path for this file

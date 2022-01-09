@@ -1,8 +1,11 @@
 """General access to all methods of metadata storage"""
 import pathlib
 
+from multidict import MultiDict
+
 from metaindex import json
 from metaindex import opf
+from metaindex.shared import IS_RECURSIVE
 
 try:
     from metaindex import yaml
@@ -85,3 +88,34 @@ def store(metadata, filename, suffix=None):
         suffix = pathlib.Path(filename).suffix
     return BY_SUFFIX[suffix].store(metadata, filename)
 
+
+def as_collection(metadata, strip_prefix='extra.'):
+    """Return a store-compatible collection style dict of metadata (coming from get_for_collection)
+
+    Expects a dict as returned by ``get_for_collection``, and will convert it
+    to the correct form as expected by ``store``.
+    That means it will convert the keys from pathlib.Path to str, remove
+    IS_RECURSIVE tags and, if ``strip_prefix`` is set, it will remove the
+    given prefix.
+
+    So, technically you could run ``store(as_collection(get_for_collection(sidecar)), sidecar)``
+    and it would result in the identical sidecar file.
+    """
+    converted = {}
+    for filename, entry in metadata.items():
+        if isinstance(filename, pathlib.Path):
+            key = filename.name
+        else:
+            key = str(filename)
+
+        if filename.is_dir():
+            key = '**' if any(k == IS_RECURSIVE and v for k, v in entry.items()) \
+                  else '*'
+
+        converted[key] = MultiDict([(k[len(strip_prefix):]
+                                       if strip_prefix is not None else k,
+                                     v)
+                                     for k, v in entry.items()
+                                     if k != IS_RECURSIVE])
+
+    return converted

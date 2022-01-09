@@ -5,6 +5,15 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+## 0.6.0
+### Added
+- Function to iterate through all sidecar files of a file
+- Function to rename entries in the database
+- `stores.as_collection` to ease the pain when writing collection metadata sidecars
+
+### Changed
+- The filename is no longer stored as a separate metadata tag in the database
+
 ## 0.5.1
 ### Fixed
 - Collection metadata files could be missed in some cases

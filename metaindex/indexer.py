@@ -252,7 +252,6 @@ def get_metadata(filename, indexer_cache):
     suffix = filename.suffix[1:]
     mimetype, _ = mimetypes.guess_type(filename, strict=False)
     info = multidict.MultiDict({'size': stat.st_size,
-                                'filename': filename.name,
                                 'last_accessed': datetime.datetime.fromtimestamp(stat.st_atime),
                                 'last_modified': datetime.datetime.fromtimestamp(stat.st_mtime)})
 

@@ -7,6 +7,7 @@ import re
 import fnmatch
 import queue
 import threading
+import time
 
 import multidict
 
@@ -35,7 +36,6 @@ class Cache:
     def __init__(self, config=None):
         self.config = config or configuration.load()
         assert isinstance(self.config, configuration.Configuration)
-        self.db = None
 
         self.recursive_extra_metadata = config.bool(configuration.SECTION_GENERAL,
                                                     configuration.CONFIG_RECURSIVE_EXTRA_METADATA,
@@ -46,6 +46,9 @@ class Cache:
         self.ignore_tags = config.list(configuration.SECTION_GENERAL,
                                        configuration.CONFIG_IGNORE_TAGS,
                                        "")
+        self.index_unknown = config.bool(configuration.SECTION_GENERAL,
+                                         configuration.CONFIG_INDEX_UNKNOWN,
+                                         "no")
 
         ocr_opts = config.list(configuration.SECTION_GENERAL, configuration.CONFIG_OCR, "no")
         if len(ocr_opts) == 0 or ocr_opts[0].lower() in config.FALSE:
@@ -58,7 +61,9 @@ class Cache:
         else:
             self.ocr = ocr.Dummy()
 
-        fulltext_opts = config.list("General", "fulltext", "no")
+        fulltext_opts = config.list(configuration.SECTION_GENERAL,
+                                    configuration.CONFIG_FULLTEXT,
+                                    "no")
         if len(fulltext_opts) == 0 or fulltext_opts[0].lower() in config.FALSE:
             fulltext_opts = False
         elif fulltext_opts[0].lower() in config.TRUE:
@@ -69,8 +74,12 @@ class Cache:
         self.ignore_file_patterns = None
         self.accept_file_patterns = None
 
-        accept = config.list('General', 'accept-files', '', separator="\n")
-        ignore = config.list('General', 'ignore-files', '', separator="\n")
+        accept = config.list(configuration.SECTION_GENERAL,
+                             configuration.CONFIG_ACCEPT_FILES,
+                             '', separator="\n")
+        ignore = config.list(configuration.SECTION_GENERAL,
+                             configuration.CONFIG_IGNORE_FILES,
+                             '', separator="\n")
 
         if len(accept) > 0:
             self.accept_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
@@ -79,7 +88,23 @@ class Cache:
             self.ignore_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
                                          for pattern in ignore]
 
-        self._open_db()
+        # create database connection
+        location = self.config.get(configuration.SECTION_GENERAL,
+                                   configuration.CONFIG_CACHE,
+                                   configuration.CACHEPATH)
+        if location != ':memory:':
+            location = pathlib.Path(location).expanduser().resolve() / Cache.CACHE_FILENAME
+
+            if not location.parent.exists():
+                location.parent.mkdir(parents=True, exist_ok=True)
+
+        self.db = sqlite3.connect(location)
+        self.db.row_factory = sqlite3.Row
+        self.db.create_function('REGEXP', 2, sql.regexp)
+
+        with self.db:
+            self.db.execute(sql.CREATE_FILE_TABLE)
+            self.db.execute(sql.CREATE_META_TABLE)
 
     def refresh(self, paths=None, recursive=True, processes=None):
         """(Re-)Index all items found in the given paths or all cached items if paths is None.
@@ -121,7 +146,7 @@ class Cache:
                                              last_cached)
 
         for filename, success, info in indexer_result:
-            if not success:
+            if not success and not self.index_unknown:
                 continue
             self.insert(filename, info, last_modified[filename])
 
@@ -180,7 +205,8 @@ class Cache:
         But keep the paths in the database.
         """
         if paths is None:
-            self.db.execute("update `files` set `last_modified` = ?", (sql.MIN_DATE,))
+            with self.db:
+                self.db.execute("update `files` set `last_modified` = ?", (sql.MIN_DATE,))
             return
 
         if not isinstance(paths, list):
@@ -190,7 +216,35 @@ class Cache:
 
         query = 'update `files` set `last_modified` = ? where `path` in (' + \
                 ", ".join(["?"]*len(paths)) + ")"
-        self.db.execute(query, [sql.MIN_DATE] + [str(path) for path in paths])
+        with self.db:
+            self.db.execute(query, [sql.MIN_DATE] + [str(path) for path in paths])
+
+    def rename(self, path, new_path, is_dir=None):
+        """Rename all entries in the database that are 'path' to 'new_path'
+
+        If 'path' is pointing to a directory, all files in the subdirectories
+        will be renamed correctly, too.
+        That means that this operation can affect many rows and take some time.
+
+        If you already renamed path to new_path, you have to provide the `is_dir`
+        parameter to indicate whether the item you renamed is a directory or not!
+        """
+        with self.db:
+            if (is_dir is not None and is_dir) or path.is_dir():
+                new_parts = new_path.parts
+                query = 'select id, path from `files` where substr(`path`, 1, length(?)) = ?'
+                id_path = [(row[0], pathlib.Path(row[1]).resolve())
+                           for row in self.db.execute(query, (str(path), str(path)))]
+                id_path = [(id_,
+                            pathlib.Path(os.sep.join(new_parts +
+                                                     oldpath.parts[len(new_parts):])).resolve())
+                           for id_, oldpath in id_path]
+                for id_, newpath in id_path:
+                    self.db.execute('update `files` set `path` = ? where `id` = ?',
+                                    (str(newpath), id_))
+            else:
+                query = 'update `files` set `path` = ? where `path` = ?'
+                self.db.execute(query, (str(new_path), str(path)))
 
     def last_modified(self):
         """Return the date and time of the entry that most recently updated in the database.
@@ -341,6 +395,8 @@ class Cache:
                 logger.error(f"Unexpected key type {type(key)}")
                 key = str(key)
             result[id_][1].add(key, value)
+            if 'filename' not in result[id_][1]:
+                result[id_][1].add('filename', pathlib.Path(row['path']).name)
 
         return list(v for v in result.values())
 
@@ -356,52 +412,6 @@ class Cache:
 
         return key, value
 
-    def _open_db(self):
-        if self.db is not None:
-            self.db.close()
-
-        location = self.config.path(configuration.SECTION_GENERAL,
-                                    configuration.CONFIG_CACHE,
-                                    configuration.CACHEPATH) / Cache.CACHE_FILENAME
-        if not location.parent.exists():
-            location.parent.mkdir(parents=True, exist_ok=True)
-
-        self.db = sqlite3.connect(location)
-        self.db.row_factory = sqlite3.Row
-        self.db.create_function('REGEXP', 2, sql.regexp)
-
-        with self.db:
-            self.db.execute(sql.CREATE_FILE_TABLE)
-            self.db.execute(sql.CREATE_META_TABLE)
-
-    def _find_sidecar_files(self, files):
-        """Find all sidecar files for these files
-
-        Returns a dict with the mapping of path -> [sidecar files] containing
-        all existing sidecar files"""
-        sfiles = dict([(file_, [fn for fn in stores.sidecars_for(file_)
-                                   if fn.exists()]) for file_ in files])
-        return dict([pair for pair in sfiles.items() if len(pair[1]) > 0])
-
-    def _find_collection_sidecar_files(self, files):
-        """Find all collection sidecar files for these files
-
-        Returns a dict with the mapping of path -> [sidecar files] containing
-        all existing sidecar files"""
-        queue = {f.parent for f in files}
-        if self.recursive_extra_metadata:
-            to_visit = set()
-            # find all parent directories
-            while len(queue) > 0:
-                path = queue.pop()
-                to_visit.add(path)
-                if path.parent != path and path.parent not in to_visit:
-                    queue.add(path.parent)
-        sfiles = dict([(base, [base / fn for fn in self.collection_metadata
-                                         if (base / fn).exists()])
-                       for base in to_visit])
-        return dict([pair for pair in sfiles.items() if len(pair[1]) > 0])
-
 
 class ThreadedCache:
     """Special version of Cache to be used in multi-threaded applications
@@ -413,6 +423,7 @@ class ThreadedCache:
     REFRESH = "refresh"
     INSERT = "insert"
     GET_KEYS = "get-keys"
+    RENAME = "rename"
     LAST_MODIFIED = "last_modified"
 
     def __init__(self, config):
@@ -423,29 +434,54 @@ class ThreadedCache:
         self.results = queue.Queue()
         self.single_call = threading.Lock()
         self.cache = None
+        self._started = False
+
+    @property
+    def is_started(self):
+        return self._started
+
+    def find_indexable_files(self, paths, recursive=True):
+        self.assert_started()
+        assert self.cache is not None
+        return self.cache.find_indexable_files(paths, recursive)
+
+    def assert_started(self):
+        if not self._started:
+            raise RuntimeError("Not started")
 
     def get(self, paths, recursive=True):
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.GET, paths, recursive))
             return self.results.get()
 
     def find(self, query):
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.FIND, query))
             return self.results.get()
 
     def refresh(self, paths, recursive=True, processes=None):
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.REFRESH, paths, recursive, processes))
             return self.results.get()
 
     def insert(self, path, metadata, last_modified=None):
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.INSERT, path, metadata, last_modified))
             return self.results.get()
 
+    def rename(self, path, new_path, is_dir=None):
+        self.assert_started()
+        with self.single_call:
+            self.queue.put((self.RENAME, path, new_path, is_dir))
+            return self.results.get()
+
     def keys(self):
         """Returns a set of all known metadata keys."""
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.GET_KEYS,))
             return self.results.get()
@@ -454,6 +490,7 @@ class ThreadedCache:
         """Return the date and time of the most recently touched file that's known to the database
 
         This is pretty much equivalent to the 'last_modified' date of the database itself."""
+        self.assert_started()
         with self.single_call:
             self.queue.put((self.LAST_MODIFIED,))
             return self.results.get()
@@ -465,14 +502,19 @@ class ThreadedCache:
     def quit(self):
         """End the cache thread"""
         self._quit = True
-        self.queue.put("")
-        self.handler.join()
+        if self._started:
+            self._started = False
+            self.queue.put("")
+            self.handler.join()
 
     def handler_loop(self):
+        if self._started:
+            return
         self.cache = Cache(self.config)
+        self._started = True
         while not self._quit:
             item = self.queue.get()
-            if len(item) < 2:
+            if len(item) < 1:
                 continue
 
             command = item[0]
@@ -551,35 +593,90 @@ class MemoryCache:
         self.tcache.start()
         self.invalidate()
 
+    def find_indexable_files(self, paths, recursive=True):
+        return self.tcache.find_indexable_files(paths, recursive)
+
     def insert(self, path, metadata, last_modified=None):
         """Insert/update metadata for path"""
+        assert isinstance(metadata, multidict.MultiDict)
         with self.writing:
             if last_modified is None:
                 last_modified = shared.get_last_modified(path)
-            self.tcache.insert(path, metadata, last_modified)
             self.entries_by_path[path] = Cache.Entry(path, metadata, last_modified)
+            self.all_keys |= set(metadata.keys())
+
+        # run the actual renaming in the background though
+        threading.Thread(target=lambda:
+                self.tcache.insert(path, metadata, last_modified)).start()
 
     def find(self, query):
         """Find all entries that match this query"""
         matcher = Query.parse(query, synonyms=self.config.synonyms)
 
-        for entry in self.entries_by_path.values():
-            if matcher.matches(entry.metadata):
-                yield entry
+        return [e for e in self.entries_by_path.values()
+                if matcher.matches(e.metadata)]
 
     def get(self, paths, recursive=True):
         """Get all entries for these paths (recursively)"""
         if not isinstance(paths, (list, tuple, set)):
             paths = [paths]
+
         if recursive:
-            for path, entry in self.entries_by_path.items():
-                if not any(path.is_relative_to(pathpattern) for pathpattern in paths):
-                    continue
-                yield entry
-        else:
-            for path in paths:
-                if path in self.entries_by_path:
-                    yield self.entries_by_path[path]
+            return [entry
+                    for path, entry in self.entries_by_path.items()
+                    if any(path.is_relative_to(pathpattern)
+                           for pathpattern in paths)]
+
+        return [self.entries_by_path[path]
+                for path in paths
+                if path in self.entries_by_path]
+
+    def rename(self, path, new_path, is_dir=None):
+        """Move all metadata entries for 'path' to 'new_path'.
+
+        `path` can be a directory, moving all cached subentries accordingly, too.
+
+        `is_dir` can be set to True/False to indicate whether the renamed object
+        is a path. Use this if you *first* rename the path and then update the
+        cache."""
+        if not isinstance(new_path, pathlib.Path):
+            new_path = pathlib.Path(new_path).expanduser().resolve()
+        if not isinstance(path, pathlib.Path):
+            path = pathlib.Path(path).expanduser().resolve()
+
+        logger.debug("Rename %s to %s", path, new_path)
+        if (is_dir is not None and is_dir) or path.is_dir():
+            entries = [e for p, e in self.entries_by_path.items()
+                       if p.is_relative_to(path)]
+            for entry in entries:
+                del self.entries_by_path[entry.path]
+                assert path.parts == entry.path.parts[:len(path.parts)]
+                parts = new_path.parts + entry.path.parts[len(path.parts):]
+                new_entry_path = pathlib.Path(os.sep.join(parts)).resolve()
+                logger.debug(" ... renaming %s to %s", entry.path, new_entry_path)
+                new_entry = Cache.Entry(new_entry_path,
+                                        entry.metadata,
+                                        entry.last_modified)
+                self.entries_by_path[new_entry_path] = new_entry
+
+        elif path in self.entries_by_path:
+            entry = self.entries_by_path[path]
+            new_entry = Cache.Entry(new_path,
+                                    entry.metadata,
+                                    entry.last_modified)
+            new_entry.metadata.popall('filename', [])
+            new_entry.metadata['filename'] = str(new_path.name)
+            self.entries_by_path[new_path] = new_entry
+            del self.entries_by_path[path]
+
+        threading.Thread(target=lambda: self.do_rename(path, new_path)).start()
+
+    def do_rename(self, path, new_path):
+        """A blocking rename function.
+
+        Do not call this directly, but call 'rename' instead."""
+        with self.writing:
+            self.tcache.rename(path, new_path)
 
     def refresh(self, paths, recursive=True, processes=None):
         """(Re-)index these paths (recursively by default)"""
@@ -609,7 +706,7 @@ class MemoryCache:
     def invalidate(self):
         """Invalidate the cached entries and reload"""
         self.entries_by_path = {}
-        self.all_keys = {}
+        self.all_keys = set()
         self.reload()
 
     def reload(self):
@@ -624,6 +721,13 @@ class MemoryCache:
         entries = {}
         keys = set()
         with self.reloading:
+            attempt = 0
+            while not self.tcache.is_started and attempt < 10:
+                time.sleep(0.1)
+                attempt += 1
+            if not self.tcache.is_started:
+                return
+
             for entry in self.tcache.find(''):
                 entries[entry.path] = entry
                 keys |= entry.metadata.keys()
