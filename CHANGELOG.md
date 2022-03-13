@@ -5,6 +5,46 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+
+## 1.0.1
+### Fixed
+- The SQL backend stored the humanized value instead of the raw value
+
+
+## 1.0.0
+### Changed
+- Dropped `multidict` dependency
+- Introduction of `shared.CacheEntry` (instead of a named tuple)
+- ``IndexerBase`` API changed
+
+### Added
+- Support for humanizers
+- ABC notation metadata indexing
+
+
+## 0.8.0
+### Added
+- `bulk_rename` operation in `MemoryCache`.
+- Implemented `forget` in all caches
+
+### Fixed
+- When querying all sidecar files for a file, metaindex would return the file itself, when asking this for a sidecar file (odd scenario, still bad)
+
+
+## 0.7.1
+### Fixed
+- `find_all_sidecar_files` would not return *all* sidecar files (ignoring those that are not writable)
+- `General.ignore-dirs`, as documented, is now actually considered
+
+### Changed
+- Added a few more files and directories to `ignore-dirs` and `ignore-files`
+- Fixed the unit tests on file collection
+
+
+## 0.7.0
+### Added
+- Function to insert a whole set of new files in the MemoryCache
+
 ## 0.6.0
 ### Added
 - Function to iterate through all sidecar files of a file

@@ -1,4 +1,6 @@
 import pathlib
+import os
+import sys
 
 from metaindex import logger
 from metaindex.cache import Cache
@@ -13,19 +15,19 @@ def find(config, args):
         symlink_folder = pathlib.Path(args.link).expanduser().resolve()
 
         if symlink_folder.exists() and not symlink_folder.is_dir():
-            logger.fatal(f"{symlink_folder} is not a directory.")
+            logger.fatal("%s is not a directory.", symlink_folder)
             return 1
-        else:
-            symlink_folder.mkdir(parents=True, exist_ok=True)
+        symlink_folder.mkdir(parents=True, exist_ok=True)
 
-        files = len([f for f in symlink_folder.iterdir()])
+        files = len(list(symlink_folder.iterdir()))
         symlinks = 0
 
         if args.force:
             symlinks = len([f for f in symlink_folder.iterdir() if f.is_symlink()])
 
         if args.force and files-symlinks > 0:
-            logger.fatal(f"Can not create symbolic links in {symlink_folder}: some files are not symlinks.")
+            logger.fatal("Can not create symbolic links in %s: some files are not symlinks.",
+                         symlink_folder)
             return 2
 
         if not args.force and files > 0:
@@ -44,7 +46,7 @@ def find(config, args):
     results = cache.find(query)
 
     for result in sorted(results):
-        print(result[0])
+        print(result.path)
 
         if symlink_folder is not None:
             target = pathlib.Path(result[0])
@@ -67,7 +69,7 @@ def find(config, args):
             if not fn.is_symlink():
                 os.symlink(target, fn)
 
-        show_keys = set(result[1].keys())
+        show_keys = set(result.keys())
         if args.tags is None:
             continue
 
@@ -75,14 +77,14 @@ def find(config, args):
             show_keys = set(sum([config.synonyms.get(key, [key]) for key in args.tags], start=[]))
 
         for key in sorted(show_keys):
-            values = result[1].getall(key, [])
+            values = result[key]
             if len(values) == 0:
                 continue
-            elif len(values) == 1:
+
+            if len(values) == 1:
                 print(f"  {key}: {values[0]}")
             else:
                 print(f"  {key}:")
                 for value in values:
                     print(f"    - {value}")
     return 0
-

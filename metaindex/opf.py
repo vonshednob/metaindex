@@ -1,7 +1,5 @@
 import pathlib
 
-import multidict
-
 try:
     import defusedxml
     from defusedxml import ElementTree
@@ -16,21 +14,25 @@ from metaindex import logger
 SUFFIX = '.opf'
 
 
-def get(metadatafile, prefix):
+def get(metadatafile):
     if isinstance(metadatafile, (str, pathlib.Path)):
         with open(metadatafile, "rt", encoding="utf-8") as fh:
-            return get(fh, prefix)
+            return get(fh)
 
-    return parse_opf(metadatafile.read(), prefix, baseprefix='')
+    entry = parse_opf(metadatafile.read(), shared.EXTRA)
+    if hasattr(metadatafile, 'name'):
+        entry.path = pathlib.Path(metadatafile.name)
+
+    return entry
 
 
-def get_for_collection(metadatafile, prefix, basepath=None):
+def get_for_collection(metadatafile, basepath=None):
     if isinstance(metadatafile, (str, pathlib.Path)):
         with open(metadatafile, "rt", encoding="utf-8") as fh:
-            return get_for_collection(fh, prefix, metadatafile.parent)
+            return get_for_collection(fh, pathlib.Path(metadatafile).parent)
 
-    data = parse_opf(metadatafile.read(), prefix, baseprefix='')
-
+    data = parse_opf(metadatafile.read(), prefix=shared.EXTRA)
+    data.path = basepath
     data.add(shared.IS_RECURSIVE, True)
 
     return {basepath: data}
@@ -44,20 +46,20 @@ def check_defusedxml():
         defusedxml = False
 
 
-def parse_opf(content, prefix, baseprefix='opf.'):
+def parse_opf(content, prefix='opf.'):
     check_defusedxml()
+    result = shared.CacheEntry(None)
+
     try:
         root = ElementTree.fromstring(content)
     except:
-        return {}
+        return result
 
-    metadata = None
-    result = multidict.MultiDict()
     for node in root.findall('.//{http://purl.org/dc/elements/1.1/}*'):
         # tag name will start with {namespace}, get rid of it
         _, tagname = node.tag.split('}', 1)
 
-        tagname = prefix + baseprefix + tagname
+        tagname = prefix + tagname
         result.add(tagname, node.text)
 
     for node in root.findall('.//{http://www.idpf.org/2007/opf}meta'):
@@ -67,13 +69,13 @@ def parse_opf(content, prefix, baseprefix='opf.'):
             continue
 
         name = node.get('name')
-        # calibre specific attributes are just handled as if they were native attributes
-        if name.startswith('calibre:'):
-            _, name = name.split(':', 1)
+        if name is not None:
+            # calibre specific attributes are just handled as if they were native attributes
+            if name.startswith('calibre:'):
+                _, name = name.split(':', 1)
 
-        # so far only accept these specific attributes from the IDPF (calibre) namespace
-        if name in ['series', 'series_index']:
-            result.add(prefix + baseprefix + name, node.get('content'))
+            # so far only accept these specific attributes from the IDPF (calibre) namespace
+            if name in ['series', 'series_index']:
+                result.add(prefix + name, node.get('content'))
 
     return result
-

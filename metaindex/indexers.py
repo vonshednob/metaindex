@@ -4,8 +4,6 @@ import io
 import zipfile
 import re
 
-import multidict
-
 try:
     import pyexiv2
 except ImportError:
@@ -34,7 +32,7 @@ from metaindex import shared
 from metaindex import json
 from metaindex import opf
 from metaindex import configuration
-from metaindex.indexer import registered_indexer, Indexer, Order, only_if_changed
+from metaindex.indexer import IndexerBase, Order, only_if_changed
 from metaindex.ruleindexer import RuleIndexer as _
 
 try:
@@ -44,11 +42,10 @@ except ImportError:
 
 
 if pyexiv2 is not None:
-    @registered_indexer
-    class Exiv2Indexer(Indexer):
+    class Exiv2Indexer(IndexerBase):
         NAME = 'exiv2'
         ACCEPT = ['image/', 'video/']
-        PREFIX = ('Xmp', 'Exif', 'Iptc')
+        PREFIX = ('xmp', 'exif', 'iptc')
 
         @only_if_changed
         def run(self, path, info, last_cached):
@@ -57,31 +54,34 @@ if pyexiv2 is not None:
             try:
                 meta = pyexiv2.core.Image(str(path))
             except:
-                return False, {}
+                return
 
-            result = multidict.MultiDict()
+            result = []
             try:
-                result.extend(meta.read_exif())
+                result += list(meta.read_exif().items())
             except:
                 pass
 
             try:
-                result.extend(meta.read_iptc())
+                result += list(meta.read_iptc().items())
             except:
                 pass
 
             try:
-                result.extend(meta.read_xmp())
+                result += list(meta.read_xmp().items())
             except:
                 pass
 
             meta.close()
-            return True, result
+
+            for key, value in result:
+                if isinstance(value, str) and len(value) == 0:
+                    continue
+                info.add(key, value)
 
 
 if mutagen is not None:
-    @registered_indexer
-    class MutagenIndexer(Indexer):
+    class MutagenIndexer(IndexerBase):
         NAME = 'mutagen'
         ACCEPT = ['audio/', 'video/']
         PREFIX = ('id3', 'audio')
@@ -92,22 +92,17 @@ if mutagen is not None:
             try:
                 meta = mutagen.File(path, easy=True)
             except:
-                return False, {}
-
-            result = multidict.MultiDict()
+                return False
 
             if meta is not None:
-                for key in meta.keys():
-                    result.extend([('id3.' + key, value) for value in meta[key]])
-                if hasattr(meta, 'info') and hasattr(meta.info, 'length'):
-                    result.add('audio.length', meta.info.length)
-
-            return True, result
+                for key, value in meta.items():
+                    info.add('id3.' + key, value)
+                if hasattr(meta, 'info') and hasattr(meta.info, 'length') and meta.info.length > 0:
+                    info.add('audio.length', meta.info.length)
 
 
 if PIL is not None:
-    @registered_indexer
-    class PillowIndexer(Indexer):
+    class PillowIndexer(IndexerBase):
         NAME = 'pillow'
         ACCEPT = ['image/']
         PREFIX = ('ocr', 'image')
@@ -119,25 +114,21 @@ if PIL is not None:
             try:
                 meta = PIL.Image.open(path)
             except:
-                return False, {}
+                return
 
-            result = {}
             if meta is not None:
-                result = {'image.resolution': "{}x{}".format(*meta.size)}
+                info.add('image.resolution', "{}x{}".format(*meta.size))
                 if self.should_ocr(path):
                     ocr = self.ocr.run(meta)
                     if ocr.success:
-                        result['ocr.language'] = ocr.language
+                        info.add('ocr.language', ocr.language)
                         if self.should_fulltext(path) and len(ocr.fulltext) > 0:
-                            result['ocr.fulltext'] = ocr.fulltext
+                            info.add('ocr.fulltext', ocr.fulltext)
                 meta.close()
-
-            return True, result
 
 
 if pdfminer is not None:
-    @registered_indexer
-    class PdfMinerIndexer(Indexer):
+    class PdfMinerIndexer(IndexerBase):
         NAME = 'pdfminer'
         ACCEPT = ['application/pdf']
         PREFIX = ('pdf', 'ocr')
@@ -153,7 +144,7 @@ if pdfminer is not None:
             try:
                 fp = open(path, 'rb')
             except OSError:
-                return False, {}
+                return
 
             from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
             from pdfminer.converter import PDFConverter, TextConverter
@@ -196,7 +187,7 @@ if pdfminer is not None:
                 pdf = PDFDocument(parser)
             except:
                 fp.close()
-                return False, {}
+                return
 
             try:
                 pdf_pages = [page for page in PDFPage.get_pages(fp, set(), check_extractable=False)]
@@ -215,10 +206,8 @@ if pdfminer is not None:
                 except Exception as exc:
                     logger.warning(f"[pdfminer] OCR in PDF died: {exc}")
 
-            result = multidict.MultiDict()
-
             if len(pdf_pages) > 0:
-                result.add('pdf.pages', len(pdf_pages))
+                info.add('pdf.pages', len(pdf_pages))
 
             logger.debug(f"[pdfminer] fulltext? {self.should_fulltext(path)}")
             if self.should_fulltext(path) and not fp.closed:
@@ -236,17 +225,18 @@ if pdfminer is not None:
                     # TODO: some preprocessing of the result might be required
                     #       like replacing weird unicodes with ascii equivalents
                     #       or stripping multiple newlines
-                    result['pdf.fulltext'] = text_output.getvalue().replace('\0', '').strip()
-                    logger.debug(f"[pdfminer] got fulltext: {result['pdf.fulltext']}")
+                    fulltext = text_output.getvalue().replace('\0', '').strip()
+                    info.add('pdf.fulltext', fulltext)
+                    logger.debug(f"[pdfminer] got fulltext: {fulltext}")
                 except Exception as exc:
                     logger.warning(f"[pdfminer] could not extract fulltext: {exc}")
 
             fp.close()
 
             if ocr_result[0]:
-                result.add('ocr.language', ocr_result[1])
+                info.add('ocr.language', ocr_result[1])
                 if self.should_fulltext(path) and len(ocr_result[2]) > 0:
-                    result.add('ocr.fulltext', ocr_result[2])
+                    info.add('ocr.fulltext', ocr_result[2])
 
             # merge the metadata into the result multidict
             if len(pdf.info) > 0:
@@ -266,7 +256,7 @@ if pdfminer is not None:
                         if value is None:
                             continue
                     elif isinstance(raw, str) and len(raw.strip()) > 0:
-                        value = raw.strip()
+                        value = raw.replace('\0', '').strip()
                     else:
                         continue
 
@@ -277,13 +267,10 @@ if pdfminer is not None:
                             continue
 
                     if value is not None:
-                        result['pdf.' + field] = value
-
-            return True, result
+                        info.add('pdf.' + field, value)
 
 
-@registered_indexer
-class EpubIndexer(Indexer):
+class EpubIndexer(IndexerBase):
     NAME = 'epub'
     ACCEPT = ['application/epub+zip']
     PREFIX = ('opf',)
@@ -296,12 +283,10 @@ class EpubIndexer(Indexer):
             files = fp.namelist()
             if 'content.opf' in files:
                 with fp.open('content.opf') as contentfp:
-                    return True, opf.parse_opf(contentfp.read(), '')
-        return False, {}
+                    info.update(opf.parse_opf(contentfp.read(), ''))
 
 
-@registered_indexer
-class FileTagsIndexer(Indexer):
+class FileTagsIndexer(IndexerBase):
     NAME = 'filetags'
     ACCEPT = '*'
     PREFIX = 'filetags'
@@ -321,6 +306,9 @@ class FileTagsIndexer(Indexer):
 
         success, result = self.extract_metadata(path.stem)
 
+        if not success:
+            return
+
         while path.parent != path:
             path = path.parent
             counter += 1
@@ -329,9 +317,14 @@ class FileTagsIndexer(Indexer):
                 break
 
             success, tags = self.extract_metadata(path.stem)
-            result |= {(tag, value) for tag, value in tags if tag in [self.NAME + '.date', self.NAME + '.tags']}
+            if not success:
+                continue
+            result |= {(tag, value)
+                       for tag, value in tags
+                       if tag in [self.NAME + '.date', self.NAME + '.tags']}
 
-        return len(result) > 0, multidict.MultiDict(list(result))
+        for key, value in result:
+            info.add(key, value)
 
     def extract_metadata(self, text):
         result = set()
@@ -358,7 +351,10 @@ class FileTagsIndexer(Indexer):
         if len(text.strip()) > 0 and len(result) > 0:
             # only add the title if anything else was found,
             # otherwise the title is just the filename and that's useless
-            result.add((self.PREFIX + '.title', text.strip()))
+            # also remove any leading or trailing spaces and underscores and
+            # leading dashes
+            text = text.lstrip('-').strip('_').strip()
+            result.add((self.PREFIX + '.title', text))
 
         return len(result) > 0, result
 
@@ -391,7 +387,33 @@ class FileTagsIndexer(Indexer):
         return match, text
 
 
-class CollectionSidecarIndexer(Indexer):
+class ABCNotationIndexer(IndexerBase):
+    NAME = 'abcnotation'
+    ACCEPT = ['text/vnd.abc', '*.abc']
+    PREFIX = ('abc',)
+
+    @only_if_changed
+    def run(self, path, metadata, last_cached):
+        logger.debug("[%s] processing %s", self.NAME, path.name)
+
+        with open(path, 'rt') as filehandle:
+            for line in filehandle:
+                if line.startswith('T:'):
+                    metadata.add('abc.title', line[2:].strip())
+                if line.startswith('M:'):
+                    metadata.add('abc.meter', line[2:].strip())
+                if line.startswith('C:'):
+                    metadata.add('abc.composer', line[2:].strip())
+                if line.startswith('Z:'):
+                    metadata.add('abc.transcription', line[2:].strip())
+                if line.startswith('G:'):
+                    metadata.add('abc.group', line[2:].strip())
+                if line.startswith('K:'):
+                    metadata.add('abc.key', line[2:].strip())
+                    break
+
+
+class CollectionSidecarIndexer(IndexerBase):
     PREFIX = None
 
     def __init__(self, *args, **kwargs):
@@ -439,12 +461,14 @@ class CollectionSidecarIndexer(Indexer):
                 continue
             self.cached_sidecar_files.add(sidecar)
 
-            self.collection_cache[sidecar.parent] = multidict.MultiDict()
-            for filepath, extra in store.get_for_collection(sidecar, self.PREFIX+'.').items():
-                self.collection_cache[filepath] = extra
+            self.collection_cache[sidecar.parent] = shared.CacheEntry(sidecar.parent)
+            for filepath, extra in store.get_for_collection(sidecar).items():
+                if filepath not in self.collection_cache:
+                    self.collection_cache[filepath] = shared.CacheEntry(filepath)
+                self.collection_cache[filepath].update(extra)
 
     def get_collection_metadata(self, path, suffix):
-        meta = multidict.MultiDict()
+        meta = shared.CacheEntry(path)
 
         for sidecar in reversed(self.find_collection_sidecars(path, suffix)):
             if sidecar.parent not in self.collection_cache:
@@ -453,13 +477,13 @@ class CollectionSidecarIndexer(Indexer):
                 continue
             extra = self.collection_cache[sidecar.parent]
             if sidecar.parent != path.parent and \
-               not (self.recursive_metadata and extra.get(shared.IS_RECURSIVE, False)):
+               not (self.recursive_metadata and
+                    any(v for k, v in extra if k == shared.IS_RECURSIVE)):
                 continue
-            meta.extend(extra)
+            meta.update(extra)
 
         if path in self.collection_cache:
-            meta.extend(self.collection_cache[path])
-        meta.popall(shared.IS_RECURSIVE, [])
+            meta.update(self.collection_cache[path])
 
         return meta
 
@@ -471,43 +495,42 @@ class CollectionSidecarIndexer(Indexer):
 
         # check for direct sidecar file
         sidecar = path.parent / (path.stem + store.SUFFIX)
-        if sidecar.is_file():
-            extra.extend(store.get(sidecar, self.PREFIX+'.'))
-            extra.popall(shared.IS_RECURSIVE, [])
+        if sidecar.is_file() and sidecar != path:
+            extra.update(store.get(sidecar))
 
-        return len(extra) > 0, extra
+        for key, value in extra:
+            if key != shared.IS_RECURSIVE:
+                info.add(key, value)
 
 
-@registered_indexer
 class JsonSidecarIndexer(CollectionSidecarIndexer):
     NAME = 'json-sidecar'
     ACCEPT = '*'
-    PREFIX = 'extra'
+    PREFIX = ''
     ORDER = Order.LAST
 
     def run(self, path, info, last_cached):
         return self.run_with_store(json, path, info, last_cached)
 
 
-@registered_indexer
 class OpfSidecarIndexer(CollectionSidecarIndexer):
     NAME = 'opf-sidecar'
     ACCEPT = '*'
-    PREFIX = 'extra'
+    PREFIX = ''
     ORDER = Order.LAST
 
     def run(self, path, info, last_cached):
         self.cache_collection_sidecars(path, opf)
-        extra = self.get_collection_metadata(path, opf.SUFFIX)
-        return len(extra) > 0, extra
+        for key, value in self.get_collection_metadata(path, opf.SUFFIX):
+            if key != shared.IS_RECURSIVE:
+                info.add(key, value)
 
 
 if yaml is not None:
-    @registered_indexer
     class YamlSidecarIndexer(CollectionSidecarIndexer):
         NAME = 'yaml-sidecar'
         ACCEPT = '*'
-        PREFIX = 'extra'
+        PREFIX = ''
         ORDER = Order.LAST
 
         def run(self, path, info, last_cached):

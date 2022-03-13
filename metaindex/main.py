@@ -1,14 +1,5 @@
 import argparse
 import sys
-import os
-import pathlib
-import mimetypes
-import json
-import shutil
-import shlex
-import subprocess
-import tempfile
-import importlib
 
 from metaindex import configuration
 from metaindex import stores
@@ -36,12 +27,12 @@ def parse_args():
     parser.add_argument('-l', '--log-level',
                         default='warning',
                         choices=['debug', 'info', 'warning', 'error', 'fatal'],
-                        help=f"The level of logging. Defaults to %(default)s.")
+                        help="The level of logging. Defaults to %(default)s.")
 
     parser.add_argument('--log-file',
                         default=None,
                         type=str,
-                        help=f"Write the log to this file instead of stderr.")
+                        help="Write the log to this file instead of stderr.")
 
     parser.add_argument('--list',
                         action="store_true",
@@ -121,7 +112,7 @@ def parse_args():
 
     if metaindex_fs is not None:
         fsparser = subparsers.add_parser('fs')
-        
+
         fsparser.add_argument('action',
                               choices=('mount', 'unmount', 'umount'),
                               help="The command to control the filesystem")
@@ -150,7 +141,7 @@ def run():
             print(name)
         return 0
 
-    elif args.command == "index":
+    if args.command == "index":
         cache = Cache(config)
         if args.clear:
             cache.clear()
@@ -171,11 +162,10 @@ def run():
 
         return 0
 
-    elif args.command == "find":
+    if args.command == "find":
         return find(config, args)
 
-    elif args.command == 'fs' and metaindex_fs is not None:
+    if args.command == 'fs' and metaindex_fs is not None:
         return metaindex_fs(config, args)
 
     return -1
-

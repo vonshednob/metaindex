@@ -18,28 +18,32 @@ CONFIGFILE = HOME / ".config" / CONFFILENAME
 CACHEPATH = HOME / ".cache" / PROGRAMNAME
 DATAPATH = HOME / ".local" / "share" / PROGRAMNAME
 
-IGNORE_DIRS = [".git",
+IGNORE_DIRS = [".git", ".svn", ".hg", ".bzr",
                "System Volume Information",
                ".stfolder",
+               "__pycache__",
                "__MACOSX"]
 IGNORE_FILES = ['*.aux', '*.toc', '*.out', '*.log', '*.nav',
                 '*.exe', '*.sys',
                 '*.bat', '*.ps',
                 '*.sh', '*.fish',
-                '*~', '*.swp', '.bak', '*.sav', '*.backup']
+                '*~', '*.swp', '*.bak', '*.sav', '*.backup', '*.old',
+                '*.old', '*.orig', '*.rej',
+                'tags', '*.log',
+                '*.a', '*.out', '*.o', '*.obj', '*.so']
 SYNONYMS = {'author': ", ".join([
                 "extra.author",
                 "extra.artist",
                 "extra.creator",
                 "id3.artist",
-                "pdf.Author",
+                "pdf.author",
                 "rules.author",
-                "Exif.Image.Artist",
-                "Xmp.dc.name"]),
+                "exif.image.artist",
+                "xmp.dc.name"]),
             'type': ", ".join([
                 "extra.type",
                 "rules.type",
-                "Xmp.dc.type"]),
+                "xmp.dc.type"]),
             'date': ", ".join([
                 "extra.date",
                 "rules.date",
@@ -49,13 +53,15 @@ SYNONYMS = {'author': ", ".join([
                 "opf.title",
                 "id3.title",
                 "rules.title",
-                "pdf.Title",
-                "Xmp.dc.title"]),
+                "pdf.title",
+                "filetags.title",
+                "abc.title",
+                "xmp.dc.title"]),
             'tags': ", ".join([
                 "extra.tags",
-                "pdf.Keywords",
-                "pdf.Categories",
-                "Xmp.dc.subject",
+                "pdf.keywords",
+                "pdf.categories",
+                "xmp.dc.subject",
                 "extra.subject",
                 "rules.tags",
                 "rules.subject",
@@ -64,7 +70,7 @@ SYNONYMS = {'author': ", ".join([
             'language': ", ".join([
                 "opf.language",
                 "pdf.Language",
-                "Xmp.dc.language",
+                "xmp.dc.language",
                 "extra.language",
                 "rules.language",
                 "ocr.language"]),
@@ -89,7 +95,7 @@ SECTION_INCLUDE = 'Include'
 CONFIG_CACHE = 'cache'
 CONFIG_RECURSIVE_EXTRA_METADATA = 'recursive-extra-metadata'
 CONFIG_COLLECTION_METADATA = 'collection-metadata'
-CONFIG_IGNORE_DIRS = 'ignore-directories'
+CONFIG_IGNORE_DIRS = 'ignore-dirs'
 CONFIG_IGNORE_FILES = 'ignore-files'
 CONFIG_ACCEPT_FILES = 'accept-files'
 CONFIG_INDEX_UNKNOWN = 'index-unknown'
@@ -234,25 +240,21 @@ class Configuration(BaseConfiguration):
         The files are returned in order of preference and direct sidecar files
         before collection sidecar files.
 
-        May not return anything, if no sidecar files exist."""
-        all_stores = [(store, hasattr(store, 'store'))
-                      for store in self.get_preferred_sidecar_stores()]
-        usable_stores = [store for store, usable in all_stores if usable]
+        May return an empty list, if no sidecar files exist.
+        """
+        all_stores = list(self.get_preferred_sidecar_stores())
 
-        if len(usable_stores) == 0:
-            return
-
-        for store, usable in all_stores:
+        for store in all_stores:
             sidecar = path.parent / (path.stem + store.SUFFIX)
-            if sidecar.is_file() and usable:
+            if sidecar.is_file() and sidecar != path:
                 yield sidecar, False
 
-        for store, usable in all_stores:
+        for store in all_stores:
             for collection_fname in self.collection_metadata:
                 if not collection_fname.endswith(store.SUFFIX):
                     continue
                 sidecar = path.parent / collection_fname
-                if sidecar.is_file() and usable:
+                if sidecar.is_file() and sidecar != path:
                     yield sidecar, True
 
     def resolve_sidecar_for(self, path):
@@ -262,8 +264,7 @@ class Configuration(BaseConfiguration):
         (which may or may not exist), a boolean whether or not the sidecar file is a collection
         file, and the store module that can be used to read/write the metadata to this sidecar.
 
-        May return (None, False, None) in case there is no usable storage. In that case it will
-        write a message into the error log, too.
+        May return (None, False, None) in case there is no usable storage.
         """
         # find what type of metadata file should be used
         sidecar = None

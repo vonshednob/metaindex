@@ -5,12 +5,12 @@ import datetime
 import unittest
 import pathlib
 
-from multidict import MultiDict
-
 from metaindex import logger
 from metaindex import cache
+from metaindex import shared
 from metaindex import configuration
 from metaindex import indexers as _
+from metaindex import CacheEntry
 
 
 THIS = pathlib.Path(__file__).resolve()
@@ -24,8 +24,8 @@ def make_entry(path, metadata, last_modified=None):
 
     If ``last_modified`` is not provided, datetime.datetime.now will be used instead.
     """
-    return cache.Cache.Entry(pathlib.Path(path).resolve(),
-                             MultiDict(metadata),
+    return shared.CacheEntry(pathlib.Path(path).resolve(),
+                             metadata,
                              last_modified or datetime.datetime.now())
 
 
@@ -81,25 +81,28 @@ class TestCacheBase(unittest.TestCase):
         if self.cache is None:
             return
 
-        self.cache.insert(HERE / 'a',
-                          MultiDict([('identifier', 'a')]),
-                          datetime.datetime.now())
-        self.cache.insert(THIS,
-                          MultiDict([('title', 'Test case')]),
-                          None)
+        self.cache.insert(CacheEntry(HERE / 'a',
+                                     [('identifier', 'a')],
+                                     datetime.datetime.now()))
+        self.cache.insert(CacheEntry(THIS,
+                                     [('title', 'Test case')],
+                                     None))
 
     def cache_setup(self):
         self.skipTest("Base class")
         return None
 
     def test_count_all_entries(self):
+        assert isinstance(self.cache, cache.CacheBase)
         self.assertEqual(len(self.cache.find('')), 2)
 
     def test_get(self):
+        assert isinstance(self.cache, cache.CacheBase)
         result = self.cache.get(HERE / 'a')
         self.assertEqual(len(result), 1)
 
     def test_file_rename(self):
+        assert isinstance(self.cache, cache.CacheBase)
         """Rename a single file in the database"""
         self.cache.rename(HERE / 'a', HERE / 'b')
         result = self.cache.get(HERE / 'b')
@@ -107,15 +110,17 @@ class TestCacheBase(unittest.TestCase):
         self.assertEqual(result[0].path, HERE / 'b')
 
     def test_keys(self):
+        assert isinstance(self.cache, cache.CacheBase)
         results = self.cache.keys()
 
-        self.assertEqual(len(results), 2)
-        self.assertEqual(set(results), {'identifier', 'title'})
+        self.assertEqual(len(results), 4)
+        self.assertEqual(set(results), {'identifier', 'title', 'filename', 'last_modified'})
 
     def test_dir_rename(self):
         """Rename the ../metaindex directory to ../new_name
         and check that the database renames all found entries correctly
         """
+        assert isinstance(self.cache, cache.CacheBase)
         here_changed = pathlib.Path(os.sep.join(HERE.parts[:-2] +
                                                 ('new_name', HERE.parts[-1]))).resolve()
         self.cache.rename(HERE, here_changed)
@@ -136,6 +141,9 @@ class TestOnlyKnown(TestCacheBase):
         return cache.Cache(self.config)
 
     def test_refresh(self):
+        assert isinstance(self.cache, cache.CacheBase)
+        self.assertFalse(self.cache.index_unknown)
+        self.cache.clear()
         self.cache.refresh(HERE)
         self.assertEqual(len(self.cache.find('')), 2)
 
@@ -147,6 +155,7 @@ class TestCache(TestCacheBase):
         return cache.Cache(self.config)
 
     def test_refresh(self):
+        assert isinstance(self.cache, cache.CacheBase)
         self.cache.refresh(HERE)
         result = self.cache.get(THIS)
         self.assertEqual(len(result), 1)

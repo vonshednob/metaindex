@@ -1,11 +1,9 @@
 """General access to all methods of metadata storage"""
 import pathlib
 
-from multidict import MultiDict
-
 from metaindex import json
 from metaindex import opf
-from metaindex.shared import IS_RECURSIVE
+from metaindex.shared import CacheEntry
 
 try:
     from metaindex import yaml
@@ -14,19 +12,19 @@ except ImportError:
 
 
 STORES = [json, opf]
-BY_SUFFIX = dict([(store.SUFFIX, store) for store in STORES])
+BY_SUFFIX = {store.SUFFIX: store for store in STORES}
 
 if yaml is not None:
     STORES.append(yaml)
     BY_SUFFIX[yaml.SUFFIX] = yaml
 
 
-def get(metadatafile, prefix='extra.'):
+def get(metadatafile):
     """Parse this metadata file for a single file.
 
-    metadatafile can be a pathlib.Path, str, or a byte stream.
+    metadatafile can be a ``pathlib.Path``, ``str``, or an ``io`` text stream.
 
-    Returns a multidict of the extra tags from this file.
+    Returns a ``CacheEntry`` of the extra tags from this file.
     Every tag name is prefixed with 'prefix'
 
     These extra keys will be added:
@@ -37,19 +35,19 @@ def get(metadatafile, prefix='extra.'):
     metadatafile = pathlib.Path(metadatafile)
 
     if metadatafile.suffix not in BY_SUFFIX:
-        return {}
+        return CacheEntry(metadatafile)
 
-    return BY_SUFFIX[metadatafile.suffix].get(metadatafile, prefix)
+    return BY_SUFFIX[metadatafile.suffix].get(metadatafile)
 
 
-def get_for_collection(metadatafile, prefix='extra.', basepath=None):
+def get_for_collection(metadatafile, basepath=None):
     """Parse this metadata file for a collection of files.
 
-    metadatafile can be a pathlib.Path or a byte stream.
-    If you provide a byte stream, you must provide basepath as the parent path
+    metadatafile can be a ``pathlib.Path`` or an ``io`` text stream.
+    If you provide a text stream, you must provide basepath as the parent path
     for the context of the collection.
 
-    Returns a mapping filename -> multidict of the extra tags from this file.
+    Returns a mapping filename -> ``CacheEntry`` of the extra tags from this file.
     The filename key may be a directory, thus affecting all files in the directory.
     Every tag name is prefixed with 'prefix'.
 
@@ -63,7 +61,7 @@ def get_for_collection(metadatafile, prefix='extra.', basepath=None):
     if metadatafile.suffix not in BY_SUFFIX:
         return {}
 
-    return BY_SUFFIX[metadatafile.suffix].get_for_collection(metadatafile, prefix, basepath)
+    return BY_SUFFIX[metadatafile.suffix].get_for_collection(metadatafile, basepath)
 
 
 def sidecars_for(filepath):
@@ -75,47 +73,22 @@ def sidecars_for(filepath):
 def store(metadata, filename, suffix=None):
     """Store this metadata information in that metadata file
 
-    As filename you may provide a filename or a byte stream for writing the data.
-    If you provide a byte stream, you must provide suffix, otherwise the correct
+    As filename you may provide a filename or an ``io`` text stream for writing
+    the data.
+    If you provide a text stream, you must provide suffix, otherwise the correct
     store cannot be resolved.
 
-    Metadata may be a list in which case filename is going to be a collection
-    metadata file.
-    Or metadata may be a multidict in which case filename is considered a
-    sidecar file.
+    Metadata may be a list of ``CacheEntry`` in which case ``filename`` is going
+    to be a collection metadata file.
+
+    Or metadata may be a ``CacheEntry`` in which case filename is considered a
+    direct sidecar file.
+
+    Only 'extra.' metadata properties will be saved in the new sidecar file!
+
+    :param metadata: ``CacheEntry``'s metadata to save.
+    :type metadata: Either ``CacheEntry`` or ``list[CacheEntry]``.
     """
     if suffix is None:
         suffix = pathlib.Path(filename).suffix
     return BY_SUFFIX[suffix].store(metadata, filename)
-
-
-def as_collection(metadata, strip_prefix='extra.'):
-    """Return a store-compatible collection style dict of metadata (coming from get_for_collection)
-
-    Expects a dict as returned by ``get_for_collection``, and will convert it
-    to the correct form as expected by ``store``.
-    That means it will convert the keys from pathlib.Path to str, remove
-    IS_RECURSIVE tags and, if ``strip_prefix`` is set, it will remove the
-    given prefix.
-
-    So, technically you could run ``store(as_collection(get_for_collection(sidecar)), sidecar)``
-    and it would result in the identical sidecar file.
-    """
-    converted = {}
-    for filename, entry in metadata.items():
-        if isinstance(filename, pathlib.Path):
-            key = filename.name
-        else:
-            key = str(filename)
-
-        if filename.is_dir():
-            key = '**' if any(k == IS_RECURSIVE and v for k, v in entry.items()) \
-                  else '*'
-
-        converted[key] = MultiDict([(k[len(strip_prefix):]
-                                       if strip_prefix is not None else k,
-                                     v)
-                                     for k, v in entry.items()
-                                     if k != IS_RECURSIVE])
-
-    return converted

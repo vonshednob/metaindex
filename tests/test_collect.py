@@ -1,41 +1,70 @@
+import configparser
 import pathlib
 import unittest
 import logging
-
-import multidict
+import tempfile
 
 from metaindex import logger
 from metaindex import cache
 from metaindex import configuration
+from metaindex import indexers as _
 
 HERE = pathlib.Path(__file__).resolve().parent
 BASEDIR = HERE.parent
-TEST_METADATA = BASEDIR / ".metadata.json"
 
 
 class TestCollect(unittest.TestCase):
     def setUp(self):
         logger.setup(logging.ERROR)
-        self.config = configuration.load(HERE / 'test.conf')
+        conf = configparser.ConfigParser(interpolation=None)
+        conf.read_dict(configuration.CONF_DEFAULTS)
+        conf.set(configuration.SECTION_GENERAL,
+                 configuration.CONFIG_CACHE,
+                 ':memory:')
+        conf.set(configuration.SECTION_GENERAL,
+                 configuration.CONFIG_IGNORE_DIRS,
+                 "System Volume Information\na")
+        self.config = configuration.Configuration(conf)
         self.cache = cache.Cache(self.config)
-        TEST_METADATA.write_text("""{"README.md": {"subject": "test"}}""")
 
-    def tearDown(self):
-        TEST_METADATA.unlink()
+    def test_sidecar_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = pathlib.Path(tmpdir)
 
-    def parse_sidecar_files(self, sidecarfiles):
-        result = multidict.MultiDict()
-        for filepath in set(sidecarfiles):
-            result.extend(self.cache.parse_extra_metadata(filepath))
-        return result
+            (tmppath / "file.txt").write_text("A file with content")
+            (tmppath / "file.json").write_text('{"title": "unit test file"}')
+            (tmppath / "file.opf").write_text('{"title": "unit test file"}')
 
-    def find_sidecar_files(self, paths):
-        sidecarfiles = sum(self.cache._find_collection_sidecar_files(paths).values(), start=[])
-        sidecarfiles = sum(self.cache._find_sidecar_files(paths).values(), start=[])
-        return sidecarfiles
+            paths = list(self.config.find_all_sidecar_files(tmppath / "file.txt"))
+            self.assertEqual(len(paths), 2)
+            self.assertEqual({tmppath / "file.json", tmppath / "file.opf"},
+                             {p[0] for p in paths})
 
-    def _disabled_test_single_file(self):
-        paths = self.find_sidecar_files([BASEDIR / "README.md"])
-        self.assertEqual(len(paths), 1)
-        self.assertIn(BASEDIR / ".metadata.json", paths)
+    def test_ignore_directories(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = pathlib.Path(tmpdir)
 
+            (tmppath / "a" / ".git" / "c").mkdir(parents=True)
+            (tmppath / "a" / ".git" / "c" / "text.txt").write_text("Unique string")
+            (tmppath / "other.txt").write_text("Other file")
+
+            results = self.cache.refresh(tmppath)
+
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].path, tmppath / "other.txt")
+
+    def test_ignore_non_sidecar_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmppath = pathlib.Path(tmpdir)
+
+            (tmppath / "text.json").write_text('{"test": "yes"}')
+            (tmppath / "other.txt").write_text("Other file")
+            (tmppath / "other.json").write_text('{"is_meta": "yes"}')
+
+            results = self.cache.refresh(tmppath)
+
+            self.assertEqual(len(results), 2)
+
+            other = self.cache.find("extra.is_meta?")
+
+            self.assertEqual(len(other), 1)

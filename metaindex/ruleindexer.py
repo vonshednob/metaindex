@@ -1,10 +1,8 @@
 import re
 
-import multidict
-
 from metaindex import logger
 from metaindex import shared
-from metaindex.indexer import registered_indexer, Indexer, Order
+from metaindex.indexer import IndexerBase, Order
 
 
 class ParseError(RuntimeError): pass
@@ -109,22 +107,22 @@ class Rule:
 
     def match(self, fulltext):
         """Return True if all regexs of the match directive match this fulltext"""
-        return all([expr.search(fulltext) is not None
-                    for expr in self.conditions])
+        return all(expr.search(fulltext) is not None
+                   for expr in self.conditions)
 
     def run(self, fulltext):
         """Run the find and set rules on fulltext.
 
         This function will NOT check whether or not match() is actually true.
-        
+
         Returns a dictionary of attributes mapped to a set of values found
         in the fulltext to match.
         """
-        attrs = multidict.MultiDict()
+        attrs = []
         found = {}
         for findname, regex in self.finds.items():
             for match in regex.finditer(fulltext):
-                if findname not in attrs:
+                if findname not in found:
                     found[findname] = set()
                 groups = match.groups()
                 if groups is not None:
@@ -145,8 +143,7 @@ class Rule:
                 if len(value) == 0:
                     continue
 
-                for v in value:
-                    attrs.add(self.prefix + attrname, v)
+                attrs += [(self.prefix + attrname, v) for v in value]
 
         return attrs
 
@@ -280,8 +277,7 @@ class Rule:
         return [token for token in tokens if len(token) > 0]
 
 
-@registered_indexer
-class RuleIndexer(Indexer):
+class RuleIndexer(IndexerBase):
     NAME = 'rule-based'
     PREFIX = 'rules'
     ORDER = Order.LAST
@@ -311,7 +307,7 @@ class RuleIndexer(Indexer):
         # or no fulltext in the previously obtained metadata
         if len(self.rules) == 0:
             logger.debug("... skipping: no rules")
-            return False, {}
+            return False, []
 
         # TODO: if there have been rules before, but no more, maybe it should
         # be considered a successful run, but clear out the previous finds
@@ -338,13 +334,12 @@ class RuleIndexer(Indexer):
            not self.changed_since_cached(path, last_cached):
             logger.debug("... skipping: no change to rules or file")
             return self.reuse_cached(last_cached)
-    
-        extra = multidict.MultiDict()
+
+        extra = []
 
         for rule in self.rules:
             if rule.match(fulltext):
-                extra.extend(rule.run(fulltext))
+                extra.append(rule.run(fulltext))
                 break
-        
-        return len(extra) > 0, extra
 
+        return len(extra) > 0, extra

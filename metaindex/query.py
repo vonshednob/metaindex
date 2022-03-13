@@ -1,7 +1,26 @@
+"""Search query abstraction"""
 import re
 
-from metaindex import sql
 from metaindex import logger
+
+
+class QueryVisitor:
+    """Visitor for search queries"""
+
+    def on_sequence_start(self, element):
+        """When visiting a Sequence element"""
+
+    def on_sequence_end(self, element):
+        """When leaving a Sequence element"""
+
+    def on_key_value(self, element):
+        """When visiting a KeyValueTerm element"""
+
+    def on_key_exists(self, element):
+        """When visiting a KeyExistsTerm element"""
+
+    def on_regex(self, element):
+        """When visiting a RegexTerm element"""
 
 
 class Query:
@@ -66,9 +85,8 @@ class Query:
     def __len__(self):
         return len(self.root.terms)
 
-    def matches(self, metadata):
-        """Given a multidict of metadata, this function tells whether or not the Query matches"""
-        return self.root.matches(metadata)
+    def accept(self, visitor):
+        self.root.accept(visitor)
 
     def as_sql(self):
         """Build an SQLite query
@@ -92,17 +110,15 @@ class Query:
 class Term:
     """Generic term"""
 
-    OR = ' union '
-    AND = ' intersect '
+    OR = 'or'
+    AND = 'and'
 
     def __init__(self, operator=None, inverted=False):
         self.inverted = inverted
         self.operator = operator or Term.AND
 
-    def matches(self, metadata):
-        raise NotImplementedError()
-
-    def as_sql(self):
+    def accept(self, visitor):
+        """Welcome this QueryVisitor"""
         raise NotImplementedError()
 
 
@@ -112,22 +128,8 @@ class RegexTerm(Term):
         super().__init__(operator, inverted)
         self.word = word
 
-    def matches(self, metadata):
-        if self.word not in sql.regex_cache:
-            sql.regex_cache[self.word] = re.compile(self.word, re.IGNORECASE)
-        regex = sql.regex_cache[self.word]
-        matches = [regex.search(str(value)) is not None
-                   for value in set(metadata.values())]
-        if self.inverted:
-            return not any(matches)
-        return any(matches)
-
-    def as_sql(self):
-        if self.word not in sql.regex_cache:
-            sql.regex_cache[self.word] = re.compile(self.word, re.IGNORECASE)
-
-        # match against any value and even against the path
-        return ("lower(`items`.`value`) REGEXP ?", [self.word])
+    def accept(self, visitor):
+        visitor.on_regex(self)
 
 
 class KeyValueTerm(Term):
@@ -137,30 +139,8 @@ class KeyValueTerm(Term):
         self.key = key
         self.regex = regex
 
-    def matches(self, metadata):
-        if self.regex not in sql.regex_cache:
-            sql.regex_cache[self.regex] = re.compile(self.regex, re.IGNORECASE)
-        keys = self.key
-        if not isinstance(keys, (list, tuple, set)):
-            keys = [keys]
-        matches = [sql.regex_cache[self.regex].search(value) is not None
-                     for value in sum([metadata.getall(key, []) for key in keys], start=[])]
-        # TODO - handle AND vs. OR
-        if self.inverted:
-            return not any(matches)
-        return any(matches)
-
-    def as_sql(self):
-        if self.regex not in sql.regex_cache:
-            sql.regex_cache[self.regex] = re.compile(self.regex, re.IGNORECASE)
-        keycheck = " = ?"
-        keys = [self.key]
-
-        if isinstance(self.key, list):
-            keycheck = " in (" + ", ".join(["?"]*len(self.key)) + ")"
-            keys = self.key
-
-        return (f"(`items`.`key` {keycheck} AND `items`.`value` REGEXP ?)", keys + [self.regex])
+    def accept(self, visitor):
+        visitor.on_key_value(self)
 
 
 class KeyExistsTerm(Term):
@@ -169,28 +149,8 @@ class KeyExistsTerm(Term):
         super().__init__(operator, inverted)
         self.key = key
 
-    def matches(self, metadata):
-        keys = self.key
-        if not isinstance(keys, (list, set, tuple)):
-            keys = [keys]
-
-        result = any(key in metadata for key in keys)
-
-        if self.inverted:
-            return not result
-        return result
-
-    def as_sql(self):
-        keycheck = " = ?"
-        keys = self.key
-        if not isinstance(keys, (list, set, tuple)):
-            keys = [self.key]
-
-        if isinstance(self.key, list):
-            keycheck = " in (" + ", ".join(["?"]*len(self.key)) + ")"
-            keys = self.key
-
-        return (f"`items`.`key` {keycheck}", keys)
+    def accept(self, visitor):
+        visitor.on_key_exists(self)
 
 
 class Sequence(Term):
@@ -199,12 +159,14 @@ class Sequence(Term):
 
      - RegexTerm (match *any* value in form of a regex),
      - Key (match all items that have this metadata key; syntax: "key?"),
-     - KeyValue (match all items that have this metadata key and their value matches the regex: "key:regex"),
-     - KeyEqualValue (match all items that have this metadata key with that value; syntax: "key=value"),
-     - KeyLessValue (match all items that have this metadata key and the value is "less"
-       than the given value; syntax: "key<value")
-     - KeyGreaterValue (match all items that have this metadata key and the value is "greater"
-       than the given value; syntax: "key>value")
+     - KeyValue (match all items that have this metadata key and their
+       value matches the regex: "key:regex"),
+     - KeyEqualValue (match all items that have this metadata key with that
+       value; syntax: "key=value"),
+     - KeyLessValue (match all items that have this metadata key and the value
+       is "less" than the given value; syntax: "key<value")
+     - KeyGreaterValue (match all items that have this metadata key and the
+       value is "greater" than the given value; syntax: "key>value")
 
     Any term may be negated by prepending a "-" or "not:".
     """
@@ -216,6 +178,12 @@ class Sequence(Term):
     def add(self, term):
         self.terms.append(term)
         return self
+
+    def accept(self, visitor):
+        visitor.on_sequence_start(self)
+        for term in self.terms:
+            term.accept(visitor)
+        visitor.on_sequence_end(self)
 
     def matches(self, metadata):
         result = all(term.matches(metadata) for term in self.terms)
@@ -279,4 +247,3 @@ def tokenize(text):
         words.append(word.strip())
 
     return [word for word in words if len(word) > 0]
-

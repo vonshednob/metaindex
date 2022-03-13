@@ -1,8 +1,6 @@
 import json
 import pathlib
 
-import multidict
-
 from metaindex import logger
 from metaindex import shared
 
@@ -10,45 +8,47 @@ from metaindex import shared
 SUFFIX = '.json'
 
 
-def get(filename, prefix):
+def get(filename):
     if isinstance(filename, (str, pathlib.Path)):
         logger.debug(f"Reading JSON metadata from {filename}")
         with open(filename, "rt", encoding="utf-8") as fh:
-            return get(fh, prefix)
+            return get(fh)
+
+    entry = shared.CacheEntry(None)
+    if hasattr(filename, 'name'):
+        entry.path = pathlib.Path(filename.name)
 
     success, data = _read_json_file(filename)
 
     if not success:
-        return {}
-
-    result = multidict.MultiDict()
+        return entry
 
     for key in data.keys():
         values = data[key]
 
         if not isinstance(values, list):
             values = [values]
-        
+
         for value in values:
-            result.add(prefix + key, value)
+            entry.add(shared.EXTRA + key, value)
 
-    result.add(shared.IS_RECURSIVE, False)
+    entry.add(shared.IS_RECURSIVE, False)
 
-    return result
+    return entry
 
 
-def get_for_collection(filename, prefix, basepath=None):
-    if isinstance(filename, pathlib.Path):
+def get_for_collection(filename, basepath=None):
+    if isinstance(filename, (pathlib.Path, str)):
         logger.debug(f"Reading collection JSON metadata from {filename}")
         with open(filename, "rt", encoding="utf-8") as fh:
-            return get_for_collection(fh, prefix, filename.parent)
+            return get_for_collection(fh, pathlib.Path(filename).parent)
 
     success, data = _read_json_file(filename)
 
     if not success:
         return {}
 
-    if not any([isinstance(value, dict) for value in data.values()]):
+    if not any(isinstance(value, dict) for value in data.values()):
         # the file itself is a dictionary of values and lists, so probably
         # this means that the metadata here applies to all metadat in the directory
         logger.debug(f"Assuming flat json file means it's for all files in {basepath}")
@@ -67,16 +67,16 @@ def get_for_collection(filename, prefix, basepath=None):
             fulltargetname = basepath / targetfile
 
         if fulltargetname not in result:
-            result[fulltargetname] = multidict.MultiDict()
+            result[fulltargetname] = shared.CacheEntry(pathlib.Path(fulltargetname))
 
         for key in data[targetfile].keys():
             values = data[targetfile][key]
 
             if not isinstance(values, list):
                 values = [values]
-            
+
             for value in values:
-                result[fulltargetname].add(prefix + key, value)
+                result[fulltargetname].add(shared.EXTRA + key, value)
 
         result[fulltargetname].add(shared.IS_RECURSIVE, targetfile == '**')
 
@@ -89,11 +89,30 @@ def store(metadata, filename):
         with open(filename, 'wt', encoding='utf-8') as fh:
             return store(metadata, fh)
 
-    if not isinstance(metadata, (multidict.MultiDict, dict)):
-        raise TypeError(f"Expected MultiDict or dict, got {type(metadata)}")
+    if isinstance(metadata, shared.CacheEntry):
+        data = _cacheentry_as_dict(metadata)
+    elif isinstance(metadata, list) and \
+         all(isinstance(e, shared.CacheEntry) for e in metadata):
+        data = {}
+        for item in sorted(metadata):
+            if item.path.is_dir():
+                key = '*'
+                if item[shared.IS_RECURSIVE] == [True]:
+                    key = '**'
+            else:
+                key = item.path.name
+            data[key] = _cacheentry_as_dict(item)
+    else:
+        raise TypeError()
 
-    blob = json.dumps(shared.multidict_to_dict(metadata), indent=2, ensure_ascii=False, sort_keys=True)
+    blob = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True)
     filename.write(blob)
+
+
+def _cacheentry_as_dict(entry):
+    return {key.split('.', 1)[1]: [v.raw_value for v in values]
+            for key, values in entry.metadata.items()
+            if key.startswith(shared.EXTRA)}
 
 
 def _read_json_file(filename):
@@ -108,4 +127,3 @@ def _read_json_file(filename):
         return False, {}
 
     return True, data
-
