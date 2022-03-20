@@ -2,7 +2,6 @@ import datetime
 import pathlib
 import os
 import re
-import fnmatch
 import queue
 import threading
 import time
@@ -12,7 +11,6 @@ from metaindex import configuration
 from metaindex import sql
 from metaindex import stores
 from metaindex import shared
-from metaindex import ocr
 from metaindex import logger
 from metaindex.query import Query, QueryVisitor, Term
 from metaindex.shared import CacheEntry
@@ -24,76 +22,14 @@ class CacheBase:
         self.config = config or configuration.load()
         assert isinstance(self.config, configuration.Configuration)
 
-        self.recursive_extra_metadata = \
-                self.config.bool(configuration.SECTION_GENERAL,
-                                 configuration.CONFIG_RECURSIVE_EXTRA_METADATA,
-                                 "y")
-        """Whether or not extra metadata is considered recursive"""
-
-        self.ignore_dirs = self.config.list(configuration.SECTION_GENERAL,
-                                            configuration.CONFIG_IGNORE_DIRS,
-                                            "", separator="\n")
-        """List of directories to ignore during indexing"""
-
         self.ignore_tags = self.config.list(configuration.SECTION_GENERAL,
                                             configuration.CONFIG_IGNORE_TAGS,
                                             "")
         """List of tags to not cache"""
 
-        self.index_unknown = self.config.bool(configuration.SECTION_GENERAL,
-                                              configuration.CONFIG_INDEX_UNKNOWN,
-                                              "no")
-        """Whether or not to index files when no indexers return successful"""
-
-        ocr_opts = self.config.list(configuration.SECTION_GENERAL,
-                                    configuration.CONFIG_OCR,
-                                    "no")
-
-        if len(ocr_opts) == 0 or ocr_opts[0].lower() in self.config.FALSE:
-            ocr_opts = False
-        elif ocr_opts[0].lower() in self.config.TRUE:
-            ocr_opts = True
-
-        self.ocr = ocr.Dummy()
-        """The OCR facility, as configured by the user"""
-        if ocr_opts:
-            self.ocr = ocr.TesseractOCR(ocr_opts)
-
-        fulltext_opts = self.config.list(configuration.SECTION_GENERAL,
-                                         configuration.CONFIG_FULLTEXT,
-                                         "no")
-        if len(fulltext_opts) == 0 or fulltext_opts[0].lower() in self.config.FALSE:
-            fulltext_opts = False
-        elif fulltext_opts[0].lower() in self.config.TRUE:
-            fulltext_opts = True
-
-        self.extract_fulltext = fulltext_opts
-        """Whether or not or for what files to run fulltext extraction"""
-
-        self.ignore_file_patterns = []
-        """Patterns of files to ignore"""
-        self.accept_file_patterns = None
-        """Patterns of files to index.
-        If this option is set, **only** these files must be indexed and
-        ``ignore_file_patterns`` can safely be ignored.
-        """
-
-        accept = self.config.list(configuration.SECTION_GENERAL,
-                                  configuration.CONFIG_ACCEPT_FILES,
-                                  '', separator="\n")
-        ignore = self.config.list(configuration.SECTION_GENERAL,
-                                  configuration.CONFIG_IGNORE_FILES,
-                                  '', separator="\n")
-
-        if len(accept) > 0:
-            self.accept_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
-                                         for pattern in accept]
-        elif len(ignore) > 0:
-            self.ignore_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
-                                         for pattern in ignore]
-
     def refresh(self, paths=None, recursive=True, processes=None):
-        """(Re-)Index all items found in the given paths or all cached items if paths is None.
+        """(Re-)Index all items found in the given paths or all cached items
+           if paths is ``None``.
 
         If any item in the list is a directory and recursive is True, all
         items inside that directory (including any all subdirectories) will
@@ -186,39 +122,9 @@ class CacheBase:
 
         for filename in data.keys():
             data[filename][shared.IS_RECURSIVE] = data[filename][shared.IS_RECURSIVE] and \
-                                                  self.recursive_extra_metadata
+                                                  self.config.recursive_extra_metadata
 
         return data
-
-    def find_indexable_files(self, paths, recursive=True):
-        """Find all files that can be indexed in the given paths
-
-        :param paths: A list of paths to search through
-        :param recursive: Whether or not any given directories should be indexed
-                          recursively"""
-        paths = [pathlib.Path(path).resolve() for path in paths]
-
-        # filter out ignored directories
-        paths = [path for path in paths
-                 if not any(ignoredir in path.parts
-                            for ignoredir in self.ignore_dirs)]
-
-        dirs = [path for path in paths if path.is_dir()]
-        files = {path for path in paths if path.is_file() and self._accept_file(path)}
-        files |= {fn for fn in find_files(dirs, recursive, self.ignore_dirs)
-                     if self._accept_file(fn)}
-
-        return files
-
-    def _accept_file(self, path):
-        if any(ignoredir in path.parts[:-1] for ignoredir in self.ignore_dirs):
-            return False
-        if self.config.is_sidecar_file(path):
-            return False
-        pathstr = str(path)
-        if self.accept_file_patterns is not None:
-            return any(pattern.match(pathstr) for pattern in self.accept_file_patterns)
-        return not any(pattern.match(pathstr) for pattern in self.ignore_file_patterns)
 
 
 class Cache(CacheBase):
@@ -226,7 +132,6 @@ class Cache(CacheBase):
 
     def __init__(self, config=None):
         super().__init__(config)
-
 
         # create database connection
         location = self.config.get(configuration.SECTION_GENERAL,
@@ -253,7 +158,7 @@ class Cache(CacheBase):
         if len(paths) == 0:
             return []
 
-        files = self.find_indexable_files(paths, recursive)
+        files = self.config.find_indexable_files(paths, recursive)
 
         # cache of last_modified dates for files
         last_modified = {fn: shared.get_last_modified(fn) for fn in files}
@@ -264,14 +169,14 @@ class Cache(CacheBase):
         indexer_result = indexer.index_files(files,
                                              self.config,
                                              processes,
-                                             self.ocr,
-                                             self.extract_fulltext,
+                                             self.config.ocr,
+                                             self.config.extract_fulltext,
                                              last_modified,
                                              last_cached)
 
         results = []
         for result in indexer_result:
-            if not result.success and not self.index_unknown:
+            if not result.success and not self.config.index_unknown:
                 continue
             result.info.last_modified = last_modified[result.filename]
             results.append(result.info)
@@ -370,11 +275,6 @@ class ThreadedCache(CacheBase):
     def is_started(self):
         """Whether or not the thread has been started"""
         return self._started
-
-    def find_indexable_files(self, paths, recursive=True):
-        self.assert_started()
-        assert self.cache is not None
-        return self.cache.find_indexable_files(paths, recursive)
 
     def assert_started(self):
         """Ensure that the worker thread has been started"""
@@ -562,9 +462,6 @@ class MemoryCache(CacheBase):
         self.tcache.start()
         self.invalidate()
 
-    def find_indexable_files(self, paths, recursive=True):
-        return self.tcache.find_indexable_files(paths, recursive)
-
     def insert(self, item):
         with self.writing:
             self._do_insert(item)
@@ -733,8 +630,10 @@ class MemoryCache(CacheBase):
             for path, new_path in renames:
                 self.tcache.rename(path, new_path)
 
-    def refresh(self, paths, recursive=True, processes=None):
+    def refresh(self, paths=None, recursive=True, processes=None):
         """(Re-)index these paths (recursively by default)"""
+        if paths is None:
+            paths = list(self.entries_by_path.keys())
         if not isinstance(paths, (list, set, tuple)):
             paths = [paths]
 
@@ -911,36 +810,6 @@ class CacheEntryQueryVisitor(QueryVisitor):
         if self.root is None:
             return True
         return self.root.match(entry)
-
-
-def find_files(paths, recursive=True, ignore_dirs=None):
-    """Find all files in these paths"""
-    if not isinstance(paths, list):
-        paths = [paths]
-    if ignore_dirs is None:
-        ignore_dirs = []
-
-    pathqueue = list(paths)
-    filenames = []
-
-    while len(pathqueue) > 0:
-        path = pathqueue.pop(0)
-
-        if not isinstance(path, pathlib.Path):
-            path = pathlib.Path(path)
-
-        if not path.exists():
-            continue
-
-        for item in path.iterdir():
-            if item.is_dir() and recursive and item.parts[-1] not in ignore_dirs:
-                pathqueue.append(item)
-                continue
-
-            if item.is_file():
-                filenames.append(item)
-
-    return filenames
 
 
 if __name__ == '__main__':

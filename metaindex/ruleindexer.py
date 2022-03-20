@@ -1,3 +1,4 @@
+import datetime
 import re
 
 from metaindex import logger
@@ -39,6 +40,11 @@ class RuleSet:
         for linenr, line in enumerate(text.split("\n")):
             linenr += 1
             line = line.strip()
+
+            if line == 'final':
+                rule.is_final = True
+                continue
+
             if len(line) == 0 or ' ' not in line:
                 continue
 
@@ -79,14 +85,6 @@ class RuleSet:
     def append(self, value):
         self.rules.append(value)
 
-    def run(self, fulltext, checkmatch=True):
-        attrs = multidict.MultiDict()
-        for rule in self.rules:
-            if checkmatch and not rule.match(fulltext):
-                continue
-            attrs.extend(rule.run(fulltext))
-        return attrs
-
 
 class Rule:
     @staticmethod
@@ -99,6 +97,7 @@ class Rule:
         self.finds = {}
         self.sets = {}
         self.prefix = prefix
+        self.is_final = False
 
     @property
     def is_empty(self):
@@ -170,7 +169,7 @@ class Rule:
     def parse_conditions(self, text, linenr):
         self.conditions = []
 
-        tokens = self.tokenize(text)
+        tokens = text.split()
         idx = 0
         while idx < len(tokens):
             token = tokens[idx]
@@ -193,7 +192,7 @@ class Rule:
                         regexparts.append(token[:-1])
                         break
                     if idx + 1 >= len(tokens):
-                        raise RegExParseError(linenr, f"Unexpected end of regular expression")
+                        raise RegExParseError(linenr, "Unexpected end of regular expression")
                     regexparts.append(token)
                     idx += 1
                 try:
@@ -255,27 +254,6 @@ class Rule:
             self.sets[name] = set()
         self.sets[name].add(value)
 
-    @staticmethod
-    def tokenize(text):
-        token = ''
-        tokens = []
-        escaped = False
-
-        for char in text:
-            if escaped:
-                token += char
-                escaped = False
-            elif char == '\\':
-                escaped = True
-            elif char in " \t\n":
-                tokens.append(token)
-                token = ''
-            else:
-                token += char
-        tokens.append(token)
-
-        return [token for token in tokens if len(token) > 0]
-
 
 class RuleIndexer(IndexerBase):
     NAME = 'rule-based'
@@ -287,7 +265,7 @@ class RuleIndexer(IndexerBase):
         super().__init__(*args, **kwargs)
 
         self.rules = []
-        self.rules_changed = None
+        self.rules_changed = datetime.datetime.min
         section = 'Indexer:' + self.NAME
         if section in self.config:
             for entry in self.config[section]:
@@ -307,25 +285,19 @@ class RuleIndexer(IndexerBase):
         # or no fulltext in the previously obtained metadata
         if len(self.rules) == 0:
             logger.debug("... skipping: no rules")
-            return False, []
+            return
 
         # TODO: if there have been rules before, but no more, maybe it should
         # be considered a successful run, but clear out the previous finds
 
-        fulltext = ''
-        # find fulltext first in the most recent metadata, and as fallback then in the cached
-        fields = [info]
-        if last_cached is not None:
-            fields += [last_cached.metadata]
-
-        for field in fields:
-            fulltext = shared.get_all_fulltext(field)
-            if len(fulltext) > 0:
-                break
+        # get all the fulltext values that have been extracted from earlier
+        # indexers
+        fulltext = "\n".join(str(value) for key, value in info
+                             if key.endswith('.fulltext'))
 
         if len(fulltext) == 0:
             logger.debug("... skipping: no fulltext")
-            return False, {}
+            return
 
         # if the rules file changed since the cache entry was created
         # and the file has not changed since the cache entry was created
@@ -333,13 +305,15 @@ class RuleIndexer(IndexerBase):
         if self.cached_dt(last_cached) > self.rules_changed and \
            not self.changed_since_cached(path, last_cached):
             logger.debug("... skipping: no change to rules or file")
-            return self.reuse_cached(last_cached)
+            self.reuse_cached(info, last_cached)
 
         extra = []
 
         for rule in self.rules:
             if rule.match(fulltext):
-                extra.append(rule.run(fulltext))
-                break
+                extra += rule.run(fulltext)
+                if rule.is_final:
+                    break
 
-        return len(extra) > 0, extra
+        for key, value in extra:
+            info.add(key, value)

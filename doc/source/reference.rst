@@ -1,35 +1,21 @@
 API Reference
 =============
 
-..  example stuff
-
-    TodoTxt
-    -------
-
-    .. autoclass:: pytodotxt.TodoTxt
-       :members:
-       :special-members: __init__
-
-
-    Task
-    ----
-
-    .. autoclass:: pytodotxt.Task
-       :members:
-       :special-members: __init__
-
-
-    TodoTxtParser
-    -------------
-
-    .. autoclass:: pytodotxt.TodoTxtParser
-       :members:
-       :special-members: __init__
-
 CacheEntry
 ----------
 
 .. autoclass:: metaindex.CacheEntry
+   :members:
+
+
+.. autoclass:: metaindex.shared.MetadataValue
+   :members:
+
+
+Configuration
+-------------
+
+.. autoclass:: metaindex.Configuration
    :members:
 
 
@@ -52,6 +38,7 @@ Indexers
 
 .. autoclass:: metaindex.indexer.IndexerBase
    :members:
+
 
 Humanizers
 ----------

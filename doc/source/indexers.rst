@@ -44,6 +44,7 @@ You could write a rule file like below and save it as ``big-corp.txt``::
       set date /([0-9]{4}-[01][0-9]-[0-3][0-9])/
       set invoicenr /Invoice #([0-9]+)/
       set issuer "Big Corp Inc."
+      final
 
 See below for the full syntax of a rule file.
 
@@ -173,4 +174,26 @@ regular expression here to be case insensitive by appending `i` after the last
       find issuer /(big [a-z]+)/i
       set issuer "From {issuer}"
 
+
+Final Directive
+^^^^^^^^^^^^^^^
+
+It is assumed that most rules are generic and extract snippets from the
+fulltext, like date, sender, receiver, or account numbers.
+
+However, it might be that one rule is actually extracting all there is to
+extract and you don't want subsequent rules to run. In that case you can
+add the ``final`` directive to a match directive::
+
+    # example of the 'final' directive
+    match /Big Corp/
+      set publisher "Big Corp Limited"
+      final
+
+    match /Corp/
+      set publisher "Some corporation"
+
+In this example, if the text "Big Corp" is encountered, the publisher will
+be set to "Big Corp Limited" and the following rule, checking for "Corp"
+will not be executed.
 

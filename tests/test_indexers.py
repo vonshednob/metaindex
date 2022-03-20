@@ -1,10 +1,8 @@
 """Various indexer test cases"""
-import configparser
 import unittest
 import pathlib
 
-from metaindex import MemoryCache, index_files
-from metaindex.configuration import Configuration, CONF_DEFAULTS
+from metaindex import MemoryCache, index_files, Configuration
 
 
 TEST_FILES = pathlib.Path(__file__).parent / 'test_files'
@@ -12,10 +10,8 @@ TEST_FILES = pathlib.Path(__file__).parent / 'test_files'
 
 class TestBasicIndexer(unittest.TestCase):
     def setUp(self):
-        baseconf = configparser.ConfigParser(interpolation=None)
-        baseconf.read_dict(CONF_DEFAULTS)
-        baseconf.set('General', 'cache', ':memory:')
-        self.conf = Configuration(baseconf)
+        self.conf = Configuration()
+        self.conf.set('General', 'cache', ':memory:')
         self.cache = MemoryCache(self.conf)
         self.cache.wait_for_reload()
 

@@ -30,8 +30,8 @@ class Order(IntEnum):
 
 
 def only_if_changed(fnc):
-    """Use this decorator to prevent indexers being re-run on files when they
-    have not changed since the last run."""
+    """Use this decorator on ``IndexerBase.run`` to prevent indexers being
+    re-run on files when they have not changed since the last run."""
     def wrapping(self, path, info, last_cached):
         if not self.changed_since_cached(path, last_cached):
             logger.debug(f"... skipping {path.name} since it has not changed")
@@ -200,6 +200,7 @@ class IndexerBase:
                             information to skip indexing, e.g. when the
                             ``last_modified`` of the file is older than the
                             cached entry.
+        :type last_cached: ``CacheEntry``
 
         Consider using the ``@only_if_changed`` decorator if you want this
         indexer to only be run if the file has changed since the last run of
@@ -236,13 +237,12 @@ IndexerResult = namedtuple('IndexerResult', ['filename', 'success', 'info'])
 
 class IndexerRunner:
     """Configuration and caching for the run of an indexer"""
-    def __init__(self, config=None, fulltext=False, ocr=None, last_modified=None, base_info=None):
+    def __init__(self, config=None, fulltext=False, last_modified=None, base_info=None):
         """Usually you will not have to create this instance yourself. ``index`` will
         do that for you.
 
         :param config: The configuration settings to use
         :type config: ``metaindex.configuration.Configuration``
-        :param ocr: The OCR facility to use
         :param fulltext: Whether or not to extract fulltext.
         :param last_modified: A cache of last modification dates of files
         :type last_modified: ``dict[pathlib.Path]->datetime.datetime``
@@ -250,9 +250,9 @@ class IndexerRunner:
         :type base_info: ``dict[pathlib.Path]->CacheEntry``
         """
         self.cached = {}
-        self.ocr = ocr or Dummy()
         self.fulltext = fulltext
         self.config = config or configuration.Configuration()
+        self.ocr = config.ocr
         self._last_modified = last_modified or {}
         self.base_info = base_info or {}
 
@@ -379,8 +379,6 @@ def index_files(files,
     :param baseconfig: The metaindex configuration
     :param processes: How many processes to run in parallel (this parameter is
                       currently ignored)
-    :param ocr: The OCR facility to use
-    :type ocr: ``metaindex.ocr.Dummy``
     :param fulltext: Whether or not to extract fulltext
     :param last_modified: A cache of last_modified dates of file the indexer
                           may use instead of checking the last_modified date
@@ -396,7 +394,6 @@ def index_files(files,
         baseconfig = configuration.load()
 
     runner = IndexerRunner(baseconfig,
-                           ocr=ocr,
                            fulltext=fulltext,
                            last_modified=last_modified,
                            base_info=last_cached)

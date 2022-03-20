@@ -5,6 +5,20 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+## 1.1.0
+### Changed
+- Creating a `Configuration` instance will start with the configuration defaults
+- Some properties moved from ``CacheBase`` to ``Configuration``
+- The exiv/image indexer expands values that are lists or dictionaries
+
+### Added
+- `final` directive for rule based indexer
+
+### Fixed
+- Rule based indexer was a bit broken
+- Epub indexer follows the standard to determine the root OPF file(s)
+- Addons were not able to use user-installed system packages
+
 
 ## 1.0.1
 ### Fixed

@@ -2,11 +2,15 @@ import configparser
 import pathlib
 import os
 import sys
+import re
+import fnmatch
 import importlib
 import mimetypes
 
 from metaindex import logger
 from metaindex import stores
+from metaindex import shared
+from metaindex import ocr
 
 
 HERE = pathlib.Path(__file__).parent
@@ -179,10 +183,102 @@ class BaseConfiguration:
 
 
 class Configuration(BaseConfiguration):
-    """Wrapper for BaseConfiguration (aka configparser) with additional convenience accessors"""
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    """Wrapper for BaseConfiguration (aka configparser) with additional convenience accessors
+
+    If no ``baseconfig`` is provided, the defaults will be loaded.
+
+    :type baseconfig: ``configparser.ConfigParser`` instance"""
+    def __init__(self, baseconfig=None):
+        if baseconfig is None:
+            baseconfig = configparser.ConfigParser(interpolation=None)
+            baseconfig.read_dict(CONF_DEFAULTS)
+        super().__init__(baseconfig)
         self._collection_metadata = None
+
+        self.extract_fulltext = False
+        """Whether or not or for what files to run fulltext extraction"""
+        self._update_property(SECTION_GENERAL, CONFIG_FULLTEXT)
+
+        self.ignore_dirs = []
+        """List of directories to ignore during indexing"""
+        self._update_property(SECTION_GENERAL, CONFIG_IGNORE_DIRS)
+
+        self.index_unknown = False
+        """Whether or not to index files when no indexers return successful"""
+        self._update_property(SECTION_GENERAL, CONFIG_INDEX_UNKNOWN)
+
+        self.recursive_extra_metadata = True
+        """Whether or not extra metadata is considered recursive"""
+        self._update_property(SECTION_GENERAL, CONFIG_RECURSIVE_EXTRA_METADATA)
+
+        self.ignore_file_patterns = []
+        """Patterns of files to ignore"""
+        self.accept_file_patterns = None
+        """Patterns of files to index.
+        If this option is set, **only** these files must be indexed and
+        ``ignore_file_patterns`` can safely be ignored.
+        """
+        self._update_property(SECTION_GENERAL, CONFIG_ACCEPT_FILES)
+
+        self.ocr = ocr.Dummy()
+        """The OCR facility, as configured by the user"""
+        self._update_property(SECTION_GENERAL, CONFIG_OCR)
+
+    def set(self, group, key, value):
+        super().set(group, key, value)
+        self._update_property(group, key)
+
+    def _update_property(self, section, key):
+        if section != SECTION_GENERAL:
+            return
+
+        if key == CONFIG_IGNORE_DIRS:
+            self.ignore_dirs = self.list(section, key, "", separator="\n")
+
+        if key == CONFIG_FULLTEXT:
+            fulltext_opts = self.list(section, key, "no")
+            if len(fulltext_opts) == 0 or fulltext_opts[0].lower() in self.FALSE:
+                fulltext_opts = False
+            elif fulltext_opts[0].lower() in self.TRUE:
+                fulltext_opts = True
+
+            self.extract_fulltext = fulltext_opts
+
+        if key == CONFIG_INDEX_UNKNOWN:
+            self.index_unknown = self.bool(section, key, "no")
+
+        if key == CONFIG_RECURSIVE_EXTRA_METADATA:
+            self.recursive_extra_metadata = self.bool(section, key, "y")
+
+        if key in [CONFIG_ACCEPT_FILES, CONFIG_IGNORE_FILES]:
+            self.ignore_file_patterns = []
+            self.accept_file_patterns = None
+
+            accept = self.list(SECTION_GENERAL,
+                               CONFIG_ACCEPT_FILES,
+                               '', separator="\n")
+            ignore = self.list(SECTION_GENERAL,
+                               CONFIG_IGNORE_FILES,
+                               '', separator="\n")
+
+            if len(accept) > 0:
+                self.accept_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
+                                             for pattern in accept]
+            elif len(ignore) > 0:
+                self.ignore_file_patterns = [re.compile(fnmatch.translate(pattern.strip()), re.I)
+                                             for pattern in ignore]
+
+        if key == CONFIG_OCR:
+            self.ocr = ocr.Dummy()
+
+            ocr_opts = self.list(section, key, "no")
+
+            if len(ocr_opts) == 0 or ocr_opts[0].lower() in self.FALSE:
+                ocr_opts = False
+            elif ocr_opts[0].lower() in self.TRUE:
+                ocr_opts = True
+            if ocr_opts:
+                self.ocr = ocr.TesseractOCR(ocr_opts)
 
     @property
     def collection_metadata(self):
@@ -318,6 +414,36 @@ class Configuration(BaseConfiguration):
 
         return sidecar, is_collection, stores.BY_SUFFIX[sidecar.suffix]
 
+    def find_indexable_files(self, paths, recursive=True):
+        """Find all files that can be indexed in the given paths
+
+        :param paths: A list of paths to search through
+        :param recursive: Whether or not any given directories should be indexed
+                          recursively"""
+        paths = [pathlib.Path(path).resolve() for path in paths]
+
+        # filter out ignored directories
+        paths = [path for path in paths
+                 if not any(ignoredir in path.parts
+                            for ignoredir in self.ignore_dirs)]
+
+        dirs = [path for path in paths if path.is_dir()]
+        files = {path for path in paths if path.is_file() and self._accept_file(path)}
+        files |= {fn for fn in shared.find_files(dirs, recursive, self.ignore_dirs)
+                     if self._accept_file(fn)}
+
+        return files
+
+    def _accept_file(self, path):
+        if any(ignoredir in path.parts[:-1] for ignoredir in self.ignore_dirs):
+            return False
+        if self.is_sidecar_file(path):
+            return False
+        pathstr = str(path)
+        if self.accept_file_patterns is not None:
+            return any(pattern.match(pathstr) for pattern in self.accept_file_patterns)
+        return not any(pattern.match(pathstr) for pattern in self.ignore_file_patterns)
+
     def load_mimetypes(self):
         """Load the user-configured extra mimetypes"""
         extra_mimetypes = [str(pathlib.Path(fn.strip()).expanduser().resolve())
@@ -331,7 +457,7 @@ class Configuration(BaseConfiguration):
         # load indexer addons
         if ADDONSPATH.exists():
             prev_sys_path = sys.path.copy()
-            sys.path = [str(ADDONSPATH)]
+            sys.path = [str(ADDONSPATH)] + prev_sys_path
             for item in ADDONSPATH.iterdir():
                 if item.is_file() and item.suffix == '.py':
                     logger.info(f"Loading addon {item.name}")
@@ -345,6 +471,15 @@ class Configuration(BaseConfiguration):
 
 
 def load(conffile=None):
+    """Load the metaindex configuration file ``conffile``
+
+    If ``conffile`` is ``None``, the default location of the configuration file
+    will be tried. As a last resort the built-in defaults will be used.
+
+    This function will also ensure that all additional mimetypes and indexers
+    are loaded and ignored indexers are removed from the list of registered
+    indexers.
+    """
     conf = configparser.ConfigParser(interpolation=None)
     conf.read_dict(CONF_DEFAULTS)
 

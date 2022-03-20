@@ -142,7 +142,7 @@ class TestOnlyKnown(TestCacheBase):
 
     def test_refresh(self):
         assert isinstance(self.cache, cache.CacheBase)
-        self.assertFalse(self.cache.index_unknown)
+        self.assertFalse(self.config.index_unknown)
         self.cache.clear()
         self.cache.refresh(HERE)
         self.assertEqual(len(self.cache.find('')), 2)

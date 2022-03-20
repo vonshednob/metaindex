@@ -74,8 +74,15 @@ if pyexiv2 is not None:
 
             meta.close()
 
-            for key, value in result:
+            while len(result) > 0:
+                key, value = result.pop(0)
                 if isinstance(value, str) and len(value) == 0:
+                    continue
+                if isinstance(value, list):
+                    result += [(key, v) for v in value]
+                    continue
+                if isinstance(value, dict):
+                    result += [(key, v) for v in value.values()]
                     continue
                 info.add(key, value)
 
@@ -275,15 +282,35 @@ class EpubIndexer(IndexerBase):
     ACCEPT = ['application/epub+zip']
     PREFIX = ('opf',)
 
+    ROOTFILE_NODE = './/{urn:oasis:names:tc:opendocument:xmlns:container}rootfile'
+
     @only_if_changed
     def run(self, path, info, last_cached):
         logger.debug(f"[epub] processing {path.name}")
 
         with zipfile.ZipFile(path) as fp:
             files = fp.namelist()
-            if 'content.opf' in files:
-                with fp.open('content.opf') as contentfp:
-                    info.update(opf.parse_opf(contentfp.read(), ''))
+            if not 'META-INF/container.xml' in files:
+                return
+
+            opffiles = []
+            with fp.open('META-INF/container.xml') as containerfp:
+                try:
+                    root = opf.ElementTree.fromstring(containerfp.read())
+                except:
+                    return
+                for node in root.findall(type(self).ROOTFILE_NODE):
+                    if 'full-path' not in node.attrib:
+                        continue
+                    rootfile = node.attrib['full-path']
+                    if rootfile.endswith('.opf'):
+                        opffiles.append(rootfile)
+
+            for file in opffiles:
+                if file not in files:
+                    continue
+                with fp.open(file) as contentfp:
+                    info.update(opf.parse_opf(contentfp.read(), 'opf.'))
 
 
 class FileTagsIndexer(IndexerBase):

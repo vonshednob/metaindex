@@ -53,6 +53,11 @@ def compile_documentation():
     return htmlfiles
 
 
+def example_files():
+    path = pathlib.Path('./examples')
+    return list('examples/' + fn.name for fn in path.iterdir() if fn.suffix == '.py')
+
+
 xdg_reqs = ['pyxdg']
 image_reqs = ['pyexiv2', 'pillow']
 pdf_reqs = ['pdfminer']
@@ -83,7 +88,8 @@ setuptools.setup(
     package_data={'metaindex': compile_documentation()},
     data_files=[('share/man/man1', ['man/metaindex.1']),
                 ('share/applications', []),
-                ('share/doc/metaindex', ['misc/metaindex.conf'])],
+                ('share/doc/metaindex', ['misc/metaindex.conf']),
+                ('share/doc/metaindex/examples', example_files())],
     install_requires=[],
     extras_require={'xdg': xdg_reqs,
                     'image': image_reqs,

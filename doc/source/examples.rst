@@ -6,6 +6,20 @@ Command line usage
 
 .. include:: cmdusage.rst
 
+
+Developer examples
+------------------
+
+Index some files
+~~~~~~~~~~~~~~~~
+
+You can use metaindexer's index facility without using the cache:
+
+.. literalinclude:: ../../examples/indexing.py
+   :linenos:
+   :language: python
+
+
 .. sample
 
     Adding a task to a todo.txt file
