@@ -62,7 +62,14 @@ class MatchingQueryBaseClass(unittest.TestCase):
                             }, now))
         self.cache.insert(CacheEntry('c',
                             {'opf.title': ['A book with a title'],
+                             'extra.type': ['book'],
+                             'mimetype': ['application/epub+zip'],
                             }, now))
+        self.cache.insert(CacheEntry('d',
+                            [('mimetype', 'text/plain'),
+                             ('extra.tag', 'foo'),
+                             ('extra.tag', 'bar'),
+                             ('extra.title', 'Document')], now))
 
     def setup_cache(self, baseconfig):
         self.skipTest('Base class')
@@ -73,7 +80,7 @@ class MatchingQueryBaseClass(unittest.TestCase):
         assert isinstance(self.cache, CacheBase)
         result = list(self.cache.find(''))
 
-        self.assertEqual(len(result), 3)
+        self.assertEqual(len(result), 4)
 
     def test_word(self):
         """Test for simple word queries"""
@@ -123,7 +130,7 @@ class MatchingQueryBaseClass(unittest.TestCase):
         assert isinstance(self.cache, CacheBase)
         result = list(self.cache.find('mimetype?'))
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result), 3)
 
     def test_synonym(self):
         """Test that synonyms are considered when doing key/value matches"""
@@ -136,9 +143,9 @@ class MatchingQueryBaseClass(unittest.TestCase):
     def test_synonym_exists(self):
         """Test the existence checks for synonyms"""
         assert isinstance(self.cache, CacheBase)
-        result = list(self.cache.find('tags?'))
+        result = list(self.cache.find('tag?'))
 
-        self.assertEqual(len(result), 1)
+        self.assertEqual(len(result), 2)
 
     def test_query_mimetype(self):
         """Test for querying by mimetype"""
@@ -152,23 +159,41 @@ class MatchingQueryBaseClass(unittest.TestCase):
         assert isinstance(self.cache, CacheBase)
         result = list(self.cache.find('not:mimetype:image/'))
 
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
 
     def test_has_no_key(self):
         """Test that a key is not present"""
         assert isinstance(self.cache, CacheBase)
         result = list(self.cache.find('not:opf.title?'))
 
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 3)
 
     def test_more_conditions(self):
         """Test an actual sequence of conditions"""
         assert isinstance(self.cache, CacheBase)
         result = list(self.cache.find('title? not:mimetype?'))
 
-        self.assertEqual(len(result), 2)
+        self.assertEqual(len(result), 1)
         self.assertEqual({r.path for r in result},
-                         {Path('a'), Path('c')})
+                         {Path('a'),})
+
+    def test_find_tags(self):
+        """Test a search for multiple tags"""
+        assert isinstance(self.cache, CacheBase)
+        result = list(self.cache.find('tag:file tag:data'))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual({r.path for r in result},
+                         {Path('a')})
+
+    def test_find_tags2(self):
+        """Test a search for multiple tags"""
+        assert isinstance(self.cache, CacheBase)
+        result = list(self.cache.find('mimetype:text tag:foo tag:bar'))
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual({r.path for r in result},
+                         {Path('d')})
 
 
 class NoCacheBackend(CacheBase):

@@ -121,7 +121,7 @@ def _read_yaml_file(filename):
     try:
         data = yaml.safe_load(filename.read())
     except Exception as exc:
-        logger.error("Could not read YAML sidecar file: %s", exc)
+        logger.error("Could not read YAML sidecar file %s: %s", filename, exc)
         return False, {}
 
     if not isinstance(data, dict):

@@ -133,14 +133,30 @@ class CacheEntry:
             for value in values:
                 yield key, value
         if self.path is not None:
-            yield (type(self).FILENAME, self.path.name)
-        yield (type(self).LAST_MODIFIED, self.last_modified)
+            yield (type(self).FILENAME, MetadataValue(self.path.name))
+        yield (type(self).LAST_MODIFIED, MetadataValue(self.last_modified))
 
     def __contains__(self, key):
-        """Check whether key is in the metadata"""
-        key = str(key).lower()
-        return key in self.metadata or \
-               key in type(self).AUTO_KEYS
+        """Check whether ``key`` is in the metadata
+
+        ``key`` may be a tuple of ``(key, value)``, in which case
+        the existence of this particular pair is checked for.
+        If ``value`` in this use-case is of type ``MetadataValue``, only the
+        raw value is taken for comparison.
+        """
+        if isinstance(key, (tuple, list)):
+            assert len(key) == 2
+            key, value = key
+            if isinstance(value, MetadataValue):
+                value = value.raw_value
+            return any(value == v.raw_value for v in self[key])
+
+        if isinstance(key, str):
+            key = str(key).lower()
+            return key in self.metadata or \
+                   key in type(self).AUTO_KEYS
+
+        raise TypeError(f"Expected tuple, list, or str; not {type(key).__name__}")
 
     def __repr__(self):
         return f"<{type(self).__name__} path={self.path}>"
@@ -160,9 +176,9 @@ class CacheEntry:
         :return: A list of ``MetadataValue``, may be empty.
         """
         if key == type(self).FILENAME and self.path is not None:
-            return [self.path.name]
+            return [MetadataValue(self.path.name)]
         if key == type(self).LAST_MODIFIED:
-            return [self.last_modified]
+            return [MetadataValue(self.last_modified)]
         return self.metadata.get(key.lower(), [])
 
     def ensure_last_modified(self, force=False):
@@ -241,7 +257,7 @@ class CacheEntry:
         for key, value in other:
             if key in type(self).AUTO_KEYS:
                 continue
-            if not accept_duplicates and value in self[key]:
+            if not accept_duplicates and (key, value) in self:
                 continue
             self.add(key, value)
         self.add(type(self).LAST_MODIFIED, other.last_modified)

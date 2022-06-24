@@ -137,3 +137,22 @@ def format_duration(value):
     if hours > 0:
         value = f"{hours}:" + value
     return value
+
+
+@register_humanizer('size', Priority.LOW)
+def format_filesize(value):
+    try:
+        number = int(value)
+    except ValueError:
+        return None
+
+    units = [' B', ' K', ' M', ' G', ' T']
+    unit = 0
+    while True:
+        if unit >= len(units):
+            break
+        if number < 1000:
+            break
+        number /= 1024.0
+        unit += 1
+    return str(round(number, 2)) + units[unit]

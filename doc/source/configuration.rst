@@ -72,7 +72,15 @@ General
   ``ignore-tags``
     What (automatically extracted) tags to not add to the cache and thus
     prevent them being searchable. Comma-separated list of the tags.
-    Defaults to: ``Exif.Image.StripByteCounts, Exif.Image.StripOffsets``.
+    To add to the ignored tags, instead of redefining them, include the
+    special value ``*`` in the listing.
+
+    If you want to exclude a group of tags that have the same prefix or
+    suffix, you can add a ``*`` to the end or start of the tag
+    respectively. E.g. to exclude all tags that come from Nikon in the EXIF
+    metadata group, this would do what you want: ``exif.nikon*``.
+
+    Defaults to: ``Exif.Image.StripByteCounts, Exif.Image.StripOffsets, Exif.Photo.makernote, Exif.Thumbnail.*, Exif.Sony1.0x*, Exif.Nikonsi*, Exif.Nikoncb*, Exif.Nikon3.linearizationtable, Exif.Nikon3.contrastcurve, Exif.Nikon3.0x*, Exif.Nikonfi.0x*, Exif.Canon.0x*, Exif.Canon.camerainfo, Exif.Canon.afinfo3``.
 
   ``ignore-indexers``
     A comma separated list of indexers by name that you do not want to use.
@@ -142,12 +150,24 @@ The section ``[Synonyms]`` in the configuration file is the place to define
 these synonyms. Here are the defaults, that you don’t have to set up::
 
   [Synonyms]
-  author = extra.author, extra.artist, id3.artist, pdf.Author, Exif.Image.Artist
-  title = extra.title, id3.title, pdf.Title, Xmp.dc.title, extra.opf.title
-  tags = extra.tags, pdf.Keywords, pdf.Categories, Xmp.dc.subject, extra.subject, pdf.Subject, opf.subject, extra.opf.subject
-  language = opf.language, pdf.Language, Xmp.dc.language, extra.language, extra.opf.language
-  series = extra.series
-  series_index = extra.series_index
+  author = extra.author, extra.artist, extra.creator, id3.artist, pdf.Author, rules.author, Exif.Image.Artist, comicbook.writer, xmp.dc.name
+  type = extra.type, rules.type, xmp.dc.type
+  date = extra.date, rules.date, comicbook.date
+  title = extra.title, opf.title, id3.title, rules.title, pdf.Title, filetags.title, abs.title, comicbook.title, Xmp.dc.title
+  tag = extra.tag, extra.tags, pdf.Keywords, pdf.Categories, Xmp.dc.subject, extra.subject, rules.tags, rules.tag, rules.subject, pdf.Subject, comicbook.tags, opf.subject
+  language = opf.language, pdf.Language, Xmp.dc.language, extra.language, rules.language, comicbook.language, ocr.language
+  series = extra.series, comicbook.series
+  series_index = extra.series_index, comicbook.number
+
+If you want to add tags to an existing synonym instead of redefining it
+entirly, include ``*`` in your configuration file, like this::
+
+  [Synonyms]
+  type = extra.kind, *
+
+In this example ``type`` is a synonym for ``extra.kind``, but also for all
+the existing ``type`` synonyms (e.g. ``extra.type``, ``rules.type``, and
+``xmp.dc.type``).
 
 
 Include

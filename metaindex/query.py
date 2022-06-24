@@ -63,6 +63,8 @@ class Query:
             if operator is not None:
                 key, value = token.split(operator, 1)
                 if synonyms is not None:
+                    # surprising: key can be an instance of string OR set/list,
+                    # all these are allowed
                     key = synonyms.get(key, key)
 
                 if operator == ':':
@@ -72,6 +74,8 @@ class Query:
             elif token.endswith('?'):
                 key = token[:-1]
                 if synonyms is not None:
+                    # surprising: key can be an instance of string OR set/list,
+                    # all these are allowed
                     key = synonyms.get(key, key)
                 sequence.add(KeyExistsTerm(key, join, inverted))
                 join = Term.AND

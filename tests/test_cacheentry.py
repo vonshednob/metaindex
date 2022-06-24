@@ -4,6 +4,7 @@ import datetime
 from pathlib import Path
 
 from metaindex import CacheEntry
+from metaindex.shared import MetadataValue
 
 
 class TestCacheEntry(unittest.TestCase):
@@ -18,6 +19,34 @@ class TestCacheEntry(unittest.TestCase):
         entry.update(other)
 
         self.assertEqual(len(entry), 4)
+
+
+    def test_contains_key(self):
+        entry = CacheEntry(Path('a'),
+                           [('tag', 'foo'),
+                            ('title', 'bar')])
+        self.assertFalse('type' in entry)
+        self.assertTrue('tag' in entry)
+        self.assertTrue('title' in entry)
+
+    def test_contains_key_value(self):
+        entry = CacheEntry(Path('a'),
+                           [('tag', 'foo'),
+                            ('title', 'bar')])
+        self.assertFalse(('tag', 'bar') in entry)
+        self.assertTrue(('tag', 'foo') in entry)
+        self.assertTrue(('title', 'bar') in entry)
+
+    def test_contains_key_humanized(self):
+        entry = CacheEntry(Path('a'),
+                           [('tag', MetadataValue('3.14', 'pi')),
+                            ('title', MetadataValue('raw'))])
+        self.assertTrue(('tag', MetadataValue('3.14')) in entry)
+        self.assertTrue(('title', 'raw') in entry)
+        self.assertFalse(('tag', MetadataValue('3.15', 'pi')) in entry)
+        self.assertTrue(('tag', MetadataValue('3.14', 'pi')) in entry)
+        self.assertFalse(('tag', 'pi') in entry)
+        self.assertTrue(('tag', '3.14') in entry)
 
     def test_add_last_modified(self):
         entry = CacheEntry(Path('a'),

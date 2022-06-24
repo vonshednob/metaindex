@@ -35,7 +35,22 @@ IGNORE_FILES = ['*.aux', '*.toc', '*.out', '*.log', '*.nav',
                 '*.old', '*.orig', '*.rej',
                 'tags', '*.log',
                 '*.a', '*.out', '*.o', '*.obj', '*.so']
-SYNONYMS = {'author': ", ".join([
+IGNORE_TAGS = {"Exif.Image.StripByteCounts",
+               "Exif.Image.StripOffsets",
+               "Exif.Photo.makernote",
+               "Exif.Thumbnail.*",
+               "Exif.Canon.0x*",
+               "Exif.Canon.camerainfo",
+               "Exif.Canon.afinfo3",
+               "Exif.Sony1.0x*",
+               "Exif.Nikonsi*",
+               "Exif.Nikoncb*",
+               "Exif.Nikon3.linearizationtable",
+               "Exif.Nikon3.contrastcurve",
+               "Exif.Nikon3.0x*",
+               "Exif.Nikonfi.0x*",
+               }
+SYNONYMS = {'author': {
                 "extra.author",
                 "extra.artist",
                 "extra.creator",
@@ -43,16 +58,20 @@ SYNONYMS = {'author': ", ".join([
                 "pdf.author",
                 "rules.author",
                 "exif.image.artist",
-                "xmp.dc.name"]),
-            'type': ", ".join([
+                "comicbook.writer",
+                "xmp.dc.name",
+                },
+            'type': {
                 "extra.type",
                 "rules.type",
-                "xmp.dc.type"]),
-            'date': ", ".join([
+                "xmp.dc.type",
+                },
+            'date': {
                 "extra.date",
                 "rules.date",
-                ]),
-            'title': ", ".join([
+                "comicbook.date",
+                },
+            'title': {
                 "extra.title",
                 "opf.title",
                 "id3.title",
@@ -60,26 +79,45 @@ SYNONYMS = {'author': ", ".join([
                 "pdf.title",
                 "filetags.title",
                 "abc.title",
-                "xmp.dc.title"]),
-            'tags': ", ".join([
+                "comicbook.title",
+                "xmp.dc.title",
+                },
+            'tag': {
+                "extra.tag",
                 "extra.tags",
                 "pdf.keywords",
                 "pdf.categories",
                 "xmp.dc.subject",
                 "extra.subject",
                 "rules.tags",
+                "rules.tag",
                 "rules.subject",
                 "pdf.Subject",
-                "opf.subject"]),
-            'language': ", ".join([
+                "comicbook.tags",
+                "opf.subject",
+                },
+            'rating': {
+                "extra.rating",
+                "xmp.rating",
+                },
+            'language': {
                 "opf.language",
                 "pdf.Language",
                 "xmp.dc.language",
                 "extra.language",
                 "rules.language",
-                "ocr.language"]),
-            'series': 'extra.series',
-            'series_index': 'extra.series_index'}
+                "comicbook.languageiso"
+                "ocr.language",
+                },
+            'series': {
+                'extra.series',
+                'comicbook.series',
+                },
+            'series_index': {
+                'extra.series_index',
+                'comicbook.number',
+                }
+            }
 
 
 try:
@@ -119,12 +157,13 @@ CONF_DEFAULTS = {SECTION_GENERAL: {
                     CONFIG_ACCEPT_FILES: '',
                     CONFIG_INDEX_UNKNOWN: 'yes',
                     CONFIG_IGNORE_INDEXERS: '',
-                    CONFIG_IGNORE_TAGS: "Exif.Image.StripByteCounts, Exif.Image.StripOffsets",
+                    CONFIG_IGNORE_TAGS: ", ".join(IGNORE_TAGS),
                     CONFIG_PREFERRED_SIDECAR_FORMAT: '.json, .opf',
                     CONFIG_OCR: 'no',
                     CONFIG_FULLTEXT: 'no',
                  },
-                 SECTION_SYNONYMS: SYNONYMS,
+                 SECTION_SYNONYMS: {k: ', '.join(v)
+                                    for k, v in SYNONYMS.items()},
                  SECTION_INCLUDE: {
                  },
                 }
@@ -224,6 +263,14 @@ class Configuration(BaseConfiguration):
         """The OCR facility, as configured by the user"""
         self._update_property(SECTION_GENERAL, CONFIG_OCR)
 
+        self.ignore_indexers = []
+        """List of all indexers by name that should be ignored"""
+        self._update_property(SECTION_GENERAL, CONFIG_IGNORE_INDEXERS)
+
+        self.ignore_tags = set()
+        """List of all tags that should be ignored"""
+        self._update_property(SECTION_GENERAL, CONFIG_IGNORE_TAGS)
+
     def set(self, group, key, value):
         super().set(group, key, value)
         self._update_property(group, key)
@@ -280,6 +327,21 @@ class Configuration(BaseConfiguration):
             if ocr_opts:
                 self.ocr = ocr.TesseractOCR(ocr_opts)
 
+        if key == CONFIG_IGNORE_INDEXERS:
+            self.ignore_indexers = [indexer
+                                    for indexer in self.list(section, key, '')
+                                    if len(indexer) > 0]
+
+        if key == CONFIG_IGNORE_TAGS:
+            ignore_tags = {tag.lower()
+                           for tag in self.list(section, key, '')
+                           if len(tag) > 0}
+            if '*' in ignore_tags:
+                ignore_tags.remove('*')
+                ignore_tags |= self.ignore_tags
+                ignore_tags |= IGNORE_TAGS
+            self.ignore_tags = ignore_tags
+
     @property
     def collection_metadata(self):
         """Return a list of all valid filenames for collection metadata.
@@ -288,10 +350,11 @@ class Configuration(BaseConfiguration):
         name of collection metadata file.
         """
         if self._collection_metadata is None:
-            lst = self.list(SECTION_GENERAL, CONFIG_COLLECTION_METADATA, None)
-            if lst is not None:
+            lst = self.list(SECTION_GENERAL, CONFIG_COLLECTION_METADATA, "")
+            if len(lst) > 0:
                 lst = sum([[fn + store.SUFFIX for store in self.get_preferred_sidecar_stores()]
-                           for fn in lst], start=[])
+                           for fn in lst
+                           if len(fn) > 0], start=[])
             self._collection_metadata = lst
         return self._collection_metadata
 
@@ -302,9 +365,32 @@ class Configuration(BaseConfiguration):
         E.g. might contain the entry 'title', mapping to ['opf.title', 'id3.title']
         """
         if self._synonyms is None:
-            self._synonyms = {name: self.list(SECTION_SYNONYMS, name)
-                              for name in self[SECTION_SYNONYMS]}
+            self._synonyms = {}
+            for name in self[SECTION_SYNONYMS]:
+                synonyms = {s for s in self.list(SECTION_SYNONYMS, name) if len(s) > 0}
+                if '*' in synonyms:
+                    synonyms.remove('*')
+                    synonyms |= SYNONYMS.get(name, set())
+                self._synonyms[name] = synonyms
         return self._synonyms
+
+    def expand_synonyms(self, tags):
+        """Expand all synonyms of this iterable of tags (or a single tag)
+
+        This function will return a set of tags (at least the one(s) you passed
+        in), expanding all those tags that are synonyms.
+
+        You might call this with a single tag, to expand it to its actual tags,
+        if it is a synonym. If it isn't one, this function will just return the
+        tag again (in a set).
+
+        You can also call this with an iterable of tags. In that case all synonyms
+        in that iterable are expanded accordingly.
+        """
+        if not isinstance(tags, (set, list, tuple)):
+            tags = {tags}
+        return set(sum([list(self.synonyms.get(k, {k}))
+                        for k in tags], start=[]))
 
     def is_sidecar_file(self, path):
         """Return True if the file at path is a sidecar file (either collection metadata or not)"""
@@ -353,12 +439,15 @@ class Configuration(BaseConfiguration):
                 if sidecar.is_file() and sidecar != path:
                     yield sidecar, True
 
-    def resolve_sidecar_for(self, path):
+    def resolve_sidecar_for(self, path, allow_collections=True):
         """Get a sidecar file path for this file
 
         Returns a tuple (path, is_collection, store) with the pathlib.Path to the sidecar file
         (which may or may not exist), a boolean whether or not the sidecar file is a collection
         file, and the store module that can be used to read/write the metadata to this sidecar.
+
+        ``allow_collections`` controls whether this function will return any
+        existing collection sidecar files.
 
         May return (None, False, None) in case there is no usable storage.
         """
@@ -386,7 +475,7 @@ class Configuration(BaseConfiguration):
         logger.debug(" ... any direct sidecar? %s", sidecar)
 
         # if there was none, find existing collection sidecar file
-        if sidecar is None:
+        if sidecar is None and allow_collections:
             for store, is_usable in all_stores:
                 for collection_name in self.collection_metadata:
                     if not collection_name.endswith(store.SUFFIX):
@@ -464,11 +553,6 @@ class Configuration(BaseConfiguration):
                     importlib.import_module(item.stem)
             sys.path = prev_sys_path
 
-    def ignore_indexers(self):
-        """Remove all indexers that the user configured to be ignored"""
-        from metaindex import indexer
-        indexer.remove_indexers(self.list(SECTION_GENERAL, CONFIG_IGNORE_INDEXERS, ''))
-
 
 def load(conffile=None):
     """Load the metaindex configuration file ``conffile``
@@ -506,6 +590,5 @@ def load(conffile=None):
     config = Configuration(conf)
     config.load_mimetypes()
     config.load_addons()
-    config.ignore_indexers()
 
     return config

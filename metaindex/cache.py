@@ -473,8 +473,7 @@ class MemoryCache(CacheBase):
     def bulk_insert(self, inserts):
         """Insert a whole set of files and their metadata
 
-        inserts is a list of (path, metadata, last_modified) tuples, just
-        like the parameters that you would use for 'insert'.
+        inserts is a list of `CacheEntry`s, just like you would use for 'insert'.
         """
         with self.writing:
             for item in inserts:
@@ -730,7 +729,7 @@ class CacheEntryQueryVisitor(QueryVisitor):
             super().__init__(visitor, element)
             self.keys = element.key
             if not isinstance(self.keys, (list, set, tuple)):
-                self.keys = [self.keys]
+                self.keys = {self.keys}
 
         def match(self, item):
             result = any(key in item for key in self.keys)
@@ -744,7 +743,7 @@ class CacheEntryQueryVisitor(QueryVisitor):
             self.keys = element.key
             self.regex = element.regex
             if not isinstance(self.keys, (list, tuple, set)):
-                self.keys = [self.keys]
+                self.keys = {self.keys}
 
         def match(self, item):
             matches = any(sql.regex_cache[self.regex].search(str(value)) is not None

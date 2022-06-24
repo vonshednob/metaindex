@@ -74,7 +74,7 @@ def find(config, args):
             continue
 
         if len(args.tags) > 0:
-            show_keys = set(sum([config.synonyms.get(key, [key]) for key in args.tags], start=[]))
+            show_keys = config.expand_synonyms(args.tags)
 
         for key in sorted(show_keys):
             values = result[key]

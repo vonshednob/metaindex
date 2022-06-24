@@ -6,7 +6,7 @@ from pathlib import Path
 
 from metaindex import CacheEntry, Configuration
 from metaindex.indexer import IndexerRunner
-from metaindex.ruleindexer import RuleIndexer
+from metaindex.indexers import RuleIndexer
 
 
 RULES = """

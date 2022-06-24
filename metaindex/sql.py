@@ -89,6 +89,9 @@ class SqlAccess:
         visitor = SqlQueryVisitor()
         query.accept(visitor)
         sqlquery, args = visitor.sqlquery, visitor.args
+        args = [list(a) if isinstance(a, (set, tuple)) else a
+                for a in args]
+        results = {}
         with self.db:
             ids = [row['id'] for row in self.db.execute(sqlquery, args)]
             if len(ids) == 0:
@@ -99,7 +102,6 @@ class SqlAccess:
             sqlquery = type(self).SELECT_METADATA_BASE_QUERY + \
                        f" where `files`.`id` in ({placeholder})"
 
-            results = {}
             for row in self.db.execute(sqlquery, ids):
                 id_ = row['id']
                 if id_ not in results:
@@ -357,8 +359,8 @@ class SqlQueryVisitor(QueryVisitor):
         keycheck = " = ?"
         keys = [element.key]
 
-        if isinstance(element.key, list):
-            keys = element.key
+        if isinstance(element.key, (set, list)):
+            keys = list(element.key)
             keycheck = " in (" + ", ".join(["?"]*len(keys)) + ")"
 
         expr = f"(`metadata`.`key` {keycheck} AND `metadata`.`value` REGEXP ?)"

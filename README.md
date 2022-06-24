@@ -7,6 +7,17 @@ you could do this:
 
     metaindex find mimetype:image resolution:1200x
 
+The following file formats are supported out of the box (although they might
+need additional python packages, see <#Installation>):
+
+ - images (png, jpg, etc.; whatever is supported by [Pillow](https://python-pillow.org/))
+ - audio (mp3, m4a, ogg, etc.; whatever is supported by [mutagen](https://mutagen.readthedocs.io/))
+ - pdf
+ - html
+ - epub
+ - [abc](https://abcnotation.com/) music notation
+ - cbz (through [ComicInfo.xml](https://github.com/anansi-project/comicinfo))
+
 
 ## Installation
 

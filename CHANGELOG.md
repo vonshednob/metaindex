@@ -5,6 +5,32 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
+## 1.3.0
+### Changed
+- `CacheEntry.__contains__` allows to check for presence of a tag with a particular value
+- When logging to a file, metaindex will now rotate the log file at a 4 KB size limit
+- `resolve_sidecar_for` can ignore existing collection sidecars
+
+
+## 1.2.0
+### Added
+- Indexer for HTML files (metadata)
+- Indexer for ComicBook files using ComicInfo.xml (cbz, cbt, cbr if `python-unrar` is installed)
+- File size humanizer
+- Support special value `*` in synonym definitions and `ignore-tags` to expand the existing definition
+
+### Fixed
+- The JSON sidecar writer could break when encountering unexpected metadata types (like datetime)
+
+### Changed
+- Changed default synonym 'tags' to 'tag'
+
+
+## 1.1.1
+### Fixed
+- Audio indexer did not expect that mutagen can return lists of values per key
+
+
 ## 1.1.0
 ### Changed
 - Creating a `Configuration` instance will start with the configuration defaults

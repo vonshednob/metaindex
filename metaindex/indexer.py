@@ -2,8 +2,20 @@
 import datetime
 import pathlib
 import mimetypes
+import time
+import sys
+import os
 from collections import namedtuple
+from multiprocessing import Queue, Process, Event
 from enum import IntEnum
+try:
+    from signal import SIGINT
+except ImportError:
+    SIGINT = None
+try:
+    from signal import CTRL_C_EVENT
+except ImportError:
+    CTRL_C_EVENT = None
 
 from metaindex import shared
 from metaindex import logger
@@ -212,26 +224,6 @@ class IndexerBase:
         raise NotImplementedError()
 
 
-def remove_indexers(names):
-    global _registered_indexers
-    global _indexer_by_suffix
-    global _indexer_by_mimetype
-    global _generic_indexers
-
-    if len(names) == 0:
-        return
-
-    for name in names:
-        if name in _registered_indexers:
-            del _registered_indexers[name]
-
-    _indexer_by_suffix = {key: [value for value in values if value not in names]
-                          for key, values in _indexer_by_suffix.items()}
-    _indexer_by_mimetype = {key: [value for value in values if value not in names]
-                            for key, values in _indexer_by_mimetype.items()}
-    _generic_indexers = [value for value in _generic_indexers if value not in names]
-
-
 IndexerResult = namedtuple('IndexerResult', ['filename', 'success', 'info'])
 
 
@@ -256,6 +248,24 @@ class IndexerRunner:
         self._last_modified = last_modified or {}
         self.base_info = base_info or {}
 
+        self.generic_indexers = [i for i in _generic_indexers
+                                 if i not in config.ignore_indexers]
+        self.registered_indexers = {k: v
+                                    for k, v in _registered_indexers.items()
+                                    if k not in config.ignore_indexers}
+        self.indexer_by_suffix = {k: v
+                                  for k, v in _indexer_by_suffix.items()
+                                  if k not in config.ignore_indexers}
+        self.indexer_by_mimetype = {k: v
+                                    for k, v in _indexer_by_mimetype.items()
+                                    if k not in config.ignore_indexers}
+
+        # TODO - the list of blocked indexers should rather be parsed here than
+        #        removing the indexers from the registry some time earlier
+        for name in self.registered_indexers:
+            # pre-load all
+            self.get(name)
+
     def last_modified(self, filepath):
         """Return the last_modified date if ``filepath`` if it is in the cache"""
         return self._last_modified.get(pathlib.Path(filepath), datetime.datetime.min)
@@ -268,7 +278,7 @@ class IndexerRunner:
         :rtype: ``IndexerBase``
         """
         if name not in self.cached:
-            self.cached[name] = _registered_indexers[name](self)
+            self.cached[name] = self.registered_indexers[name](self)
         return self.cached[name]
 
     def index(self, files):
@@ -278,12 +288,6 @@ class IndexerRunner:
         :type files: ``list[pathlib.Path]``
         :return: a list of ``IndexerResult``
         """
-        # TODO - the list of blocked indexers should rather be parsed here than
-        #        removing the indexers from the registry some time earlier
-        for name in _registered_indexers:
-            # pre-load all
-            self.get(name)
-
         results = []
 
         for filename in files:
@@ -294,6 +298,8 @@ class IndexerRunner:
 
             try:
                 result = self.get_metadata(filename)
+            except KeyboardInterrupt:
+                return results
             except Exception as exc:
                 logger.error("Indexing %s failed: %s", filename, exc)
                 result = IndexerResult(filename, False, shared.CacheEntry(filename))
@@ -318,15 +324,15 @@ class IndexerRunner:
 
         delete_keys = set()
         applied_indexers = 0
-        indexers = _generic_indexers[:] \
-                 + _indexer_by_suffix.get(path.suffix.lower(), [])
+        indexers = self.generic_indexers[:] \
+                 + self.indexer_by_suffix.get(path.suffix.lower(), [])
         if mimetype is not None:
             for mtype in [mimetype, mimetype.split('/', 1)[0]]:
-                indexers += _indexer_by_mimetype.get(mtype, [])
+                indexers += self.indexer_by_mimetype.get(mtype, [])
 
         base_info = self.base_info.get(path, shared.CacheEntry(path))
-        for handler in sorted(self.get(indexer) for indexer in indexers):
-            logger.debug(f"... running {handler}")
+        for handler in sorted(set(self.get(indexer) for indexer in indexers)):
+            logger.debug(f"... running {type(handler).__name__}")
 
             initial_fields = len(info)
             handler.run(path, info, base_info)
@@ -341,12 +347,43 @@ class IndexerRunner:
                                 for key_, value in info
                                 if value is None and key_.startswith(shared.EXTRA)}
 
+        # remove ignored tags
+        for keyname in self.config.ignore_tags:
+            keyname = keyname.lower()
+            if keyname.startswith('*'):
+                for other, _ in info:
+                    if other.endswith(keyname[1:]):
+                        delete_keys.add(other)
+            elif keyname.endswith('*'):
+                for other, _ in info:
+                    if other.startswith(keyname[:-1]):
+                        delete_keys.add(other)
+            else:
+                delete_keys.add(keyname)
+
         for key_ in delete_keys | {shared.IS_RECURSIVE}:
             if key_ in info:
                 del info[key_]
 
         success = applied_indexers > 0
         return IndexerResult(path, success, info)
+
+
+class IndexerRunnerProcess(IndexerRunner, Process):
+    def __init__(self, config=None, fulltext=False, last_modified=None, base_info=None):
+        IndexerRunner.__init__(self, config, fulltext, last_modified, base_info)
+        Process.__init__(self)
+        self.files = []
+        self.results = Queue()
+        self.cancel = Event()
+
+    def run(self):
+        for file_ in self.files:
+            if self.cancel.is_set():
+                break
+            results = self.index([file_])
+            for result in results:
+                self.results.put(result)
 
 
 def get(name):
@@ -389,17 +426,71 @@ def index_files(files,
     :return: The ``IndexerResult`` for each of the files that were supposed to be indexed.
     :rtype: ``list[IndexerResult]``
     """
+    from metaindex import indexers as _
 
     if baseconfig is None:
         baseconfig = configuration.load()
 
-    runner = IndexerRunner(baseconfig,
-                           fulltext=fulltext,
-                           last_modified=last_modified,
-                           base_info=last_cached)
+    if processes is None:
+        processes = len(os.sched_getaffinity(0))
+    if processes > len(files):
+        processes = len(files)
+    processes = 1
 
-    then = datetime.datetime.now()
-    results = runner.index(files)
+    results = []
+    if processes > 1:
+        logger.info("Using %s processes", processes)
+        runners = []
+        for _ in range(processes):
+            runners.append(IndexerRunnerProcess(baseconfig,
+                                                fulltext=fulltext,
+                                                last_modified=last_modified,
+                                                base_info=last_cached))
+
+        for pos, file_ in enumerate(files):
+            runner = pos % len(runners)
+            runners[runner].files.append(file_)
+
+        then = datetime.datetime.now()
+        for runner in runners:
+            runner.start()
+
+        try:
+            for runner in runners:
+                runner.join()
+        except KeyboardInterrupt:
+            logger.fatal("Cancelling all running processes")
+            for runner in runners:
+                runner.cancel.set()
+            time.sleep(0.5)
+            signal = SIGINT
+            if sys.platform.startswith('win'):
+                signal = CTRL_C_EVENT
+            for runner in runners:
+                if runner.is_alive():
+                    os.kill(runner.pid, signal)
+
+        for runner in runners:
+            try:
+                if runner.is_alive():
+                    runner.join()
+            except KeyboardInterrupt:
+                pass
+
+        for runner in runners:
+            while not runner.results.empty():
+                item = runner.results.get_nowait()
+                if item is not None:
+                    results += [item]
+
+    else:
+        runner = IndexerRunner(baseconfig,
+                               fulltext=fulltext,
+                               last_modified=last_modified,
+                               base_info=last_cached)
+
+        then = datetime.datetime.now()
+        results = runner.index(files)
 
     logger.info("Processed %s files in %s",
                 len([v for v in results if v[1]]),
@@ -414,5 +505,7 @@ if __name__ == '__main__':
     import sys
 
     logger.setup('DEBUG')
+    config = configuration.load()
 
-    index = index_files([pathlib.Path(i).expanduser() for i in sys.argv[1:]])
+    index = index_files([pathlib.Path(i).expanduser() for i in sys.argv[1:]],
+                        config)

@@ -1,5 +1,6 @@
 import json
 import pathlib
+import datetime
 
 from metaindex import logger
 from metaindex import shared
@@ -110,9 +111,33 @@ def store(metadata, filename):
 
 
 def _cacheentry_as_dict(entry):
-    return {key.split('.', 1)[1]: [v.raw_value for v in values]
+    return {key.split('.', 1)[1]: [_raw_value_for_json(v.raw_value)
+                                   for v in values]
             for key, values in entry.metadata.items()
             if key.startswith(shared.EXTRA)}
+
+
+def _raw_value_for_json(value):
+    if value is None:
+        return value
+
+    if isinstance(value, (int, float, bool, str)):
+        return value
+
+    if isinstance(value, (list, set, tuple)):
+        return list(_raw_value_for_json(v) for v in value)
+
+    if isinstance(value, datetime.datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+
+    if isinstance(value, datetime.date):
+        return value.strftime('%Y-%m-%d')
+
+    if isinstance(value, dict):
+        return {_raw_value_for_json(k): _raw_value_for_json(v)
+                for k, v in value.items()}
+
+    return str(value)
 
 
 def _read_json_file(filename):

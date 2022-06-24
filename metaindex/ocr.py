@@ -105,6 +105,8 @@ else:
                     result.fulltext = str(process.stdout, 'utf-8').strip()
                     result.confidence = 1
                     result.success = True
+            except KeyboardInterrupt:
+                raise
             except Exception as exc:
                 result.exc = exc
             finally:

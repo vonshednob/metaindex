@@ -4,10 +4,10 @@ import configparser
 import datetime
 import unittest
 import pathlib
+import logging
 
 from metaindex import logger
 from metaindex import cache
-from metaindex import shared
 from metaindex import configuration
 from metaindex import indexers as _
 from metaindex import CacheEntry
@@ -15,18 +15,6 @@ from metaindex import CacheEntry
 
 THIS = pathlib.Path(__file__).resolve()
 HERE = pathlib.Path(__file__).parent
-
-
-def make_entry(path, metadata, last_modified=None):
-    """Create a new entry from the given path, metadata, and the optional last_modified
-
-    ``metadata`` is a sequence of (key, value) tuples.
-
-    If ``last_modified`` is not provided, datetime.datetime.now will be used instead.
-    """
-    return shared.CacheEntry(pathlib.Path(path).resolve(),
-                             metadata,
-                             last_modified or datetime.datetime.now())
 
 
 class NoCacheBackend:
@@ -73,7 +61,7 @@ class TestCacheBase(unittest.TestCase):
         general[configuration.CONFIG_CACHE] = ':memory:'
         general[configuration.CONFIG_INDEX_UNKNOWN] = 'yes'
 
-        logger.setup('ERROR')
+        logger.setup(logging.ERROR)
 
         self.config = configuration.Configuration(conf)
         self.cache = self.cache_setup()

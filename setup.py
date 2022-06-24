@@ -84,7 +84,7 @@ setuptools.setup(
     author="R",
     author_email="devel+metaindex@kakaomilchkuh.de",
     entry_points={'console_scripts': ['metaindex=metaindex.main:run']},
-    packages=['metaindex'],
+    packages=['metaindex', 'metaindex/indexers'],
     package_data={'metaindex': compile_documentation()},
     data_files=[('share/man/man1', ['man/metaindex.1']),
                 ('share/applications', []),

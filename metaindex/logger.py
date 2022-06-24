@@ -1,4 +1,5 @@
 import logging as pythonlogging
+from logging.handlers import RotatingFileHandler
 
 
 _logger = None
@@ -18,7 +19,10 @@ def setup(level=pythonlogging.WARNING, filename=None):
     elif isinstance(filename, pythonlogging.Handler):
         _handler = filename
     else:
-        _handler = pythonlogging.FileHandler(filename, encoding='utf-8')
+        _handler = RotatingFileHandler(filename,
+                                       encoding='utf-8',
+                                       maxBytes=4096,
+                                       backupCount=2)
         _formatter = pythonlogging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 
     if _formatter is not None:
