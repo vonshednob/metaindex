@@ -65,6 +65,18 @@ will have to specify ``fuse`` as an additional module:
     pip install .[all,fuse]
 
 
+### Server dependencies
+
+If you just want to connect to another instance of the metaindex server,
+you are ready to go.  
+More likely though you will have to install [Xapian](https://xapian.org/)
+and its Python3 bindings. Please follow the usual way of your OS to install
+both.
+
+For example, on Archlinux you'd `pacman -S xapian python-xapian`. On
+debian-likes it would be `apt install python3-xapian`.
+
+
 ## Usage
 
 Before you can use metaindex to search for files, you have to initialize the
@@ -74,14 +86,14 @@ cache by telling it where your files to index are, for example:
 
 Afterwards you can start searching for files by metadata, like this:
 
-    metaindex find 
+    metaindex find
 
 
 ## Searching
 
 Search queries for use with `metaindex find` allow you to search
 
- - for files that have a metadata tag: `metaindex find resolution?`
+ - for files that have a metadata tag: `metaindex find resolution:`
  - for files that have a metadata tag with a certain value: `metaindex find title:"dude, where is my car"`
  - for files that have any metadata tag with a certain value: `metaindex find "just anything"`
 
@@ -91,34 +103,34 @@ Each value that you provide is actually a case insensitive regular expression.
 ## Usage from Python
 
 To use the metaindex infrastructure from Python, you should instantiate a
-`Cache` (you should use `MemoryCache` though to get the best performance; all
-three classes, `Cache`, `ThreadedCache`, and `MemoryCache` provide the same
-interface) and run queries against it (with `find`).
+`Cache` and run queries against it (with `find`).
 
-`Cache.find` will return an iterable of `Cache.Entry` instances, consisting of
+`Cache.find` will return an iterable of `CacheEntry` instances, consisting of
 
  - `path`, the location in the file system where that file was last seen
  - `metadata`, a multidict of all metadata
  - `last_modified`, the timestamp when the file was last modified on disk (to
    the knowledge of the cache)
 
+You can just iterate over the `CacheEntry` instances to get their `tag,
+value` tuples.
+
 To use the user's preferences, it's a good idea to load their configuration.
 Here's an example snippet that'll do both things:
 
+```python
     from metaindex.configuration import load
-    from metaindex.cache import MemoryCache
+    from metaindex import Cache
 
     config = load()
-    cache = MemoryCache(config)
+    cache = Cache(config)
 
-    # memory cache can load in the background, so before the *first* query
-    # you could consider waiting for it to load all entries
-    cache.wait_for_reload()
-
-    searchquery = 'mimetype:image title?'
+    searchquery = 'mimetype:image'
 
     for entry in cache.find(searchquery):
         print(entry.path)
+```
+
 
 ## Where is the code?
 
