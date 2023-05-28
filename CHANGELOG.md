@@ -5,7 +5,16 @@ This file contains the changes made between released versions.
 The format is based on [Keep a changelog](https://keepachangelog.com/) and the versioning tries to follow
 [Semantic Versioning](https://semver.org).
 
-## Not released yet
+## 2.2.1
+### Changed
+- `date` field in sidecar files will be split into `date` and `time` upon loading, if possible, and saved as a merged `date` field upon saving
+
+### Fixed
+- Overriding values by setting them to `none`/`null` in the sidecar file was not actually doing anything
+- Language hinting for OCR was too demanding; now also short ISO 639 codes work
+
+
+## 2.2.0
 ### Changed
 - Use [PyPDF](https://pypi.org/project/pypdf/) instead of pdfminer for PDF indexing
 - `OCRFacility.run` can be given a language to work with to prevent guessing
